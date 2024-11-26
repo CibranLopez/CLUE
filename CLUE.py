@@ -8,7 +8,6 @@ from torch_geometric.loader  import DataLoader
 from torch_geometric.data    import Data, Batch
 from torch.nn                import Linear
 from torch_geometric.nn      import GraphConv, global_mean_pool
-from pymatgen.core.structure import Structure
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')

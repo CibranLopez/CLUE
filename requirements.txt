@@ -1,0 +1,5 @@
+matplotlib
+torch
+seaborn
+simplejson
+scipy
