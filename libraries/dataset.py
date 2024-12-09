@@ -1,8 +1,96 @@
 import numpy as np
 import torch
+import json
+import os
+
+from libraries.graph      import graph_POSCAR_encoding
+from torch_geometric.data import Data
+from pymatgen.core        import Structure
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def generate_dataset(data_path, targets, data_folder):
+    
+    # Define basic dataset parameters for tracking data
+    dataset_parameters = {
+        'input_folder':       data_path,
+        'output_folder':      data_folder,
+        'target':             targets
+    }
+    
+    if not os.path.exists(data_folder):
+        os.system(f'mkdir {data_folder}')
+    
+    # Dump the dictionary with numpy arrays to a JSON file
+    with open(f'{data_folder}/dataset_parameters.json', 'w') as json_file:
+        json.dump(dataset_parameters, json_file)
+
+    # Generate the raw dataset from scratch, and standardize it
+    
+    # Read all materials within the database
+    dataset = []
+    labels  = []
+    for material in os.listdir(data_path):
+        # Check polymorph is a folder
+        path_to_material = f'{data_path}/{material}'
+        if not os.path.isdir(path_to_material):
+            continue
+        
+        print(material)
+        for polymorph in os.listdir(path_to_material):
+            # Path to folder containing the POSCAR
+            path_to_POSCAR = f'{data_path}/{material}/{polymorph}'
+            
+            # Check that the folder is valid
+            if os.path.exists(path_to_POSCAR):
+                print(f'\t{polymorph}')
+                
+                try:
+                    nodes, edges, attributes = graph_POSCAR_encoding(f'{path_to_POSCAR}/POSCAR')
+                except:
+                    print(f'\tError: {material} {polymorph} not loaded')
+                    continue
+    
+                extracted_target = []
+                for target in targets:
+                    if target == 'EPA':  # Load ground state energy per atom
+                        extracted_target.append(float(np.loadtxt(f'{path_to_POSCAR}/EPA')))
+                    elif target == 'bandgap':  # Load band-gap
+                        extracted_target.append(float(np.loadtxt(f'{path_to_POSCAR}/bandgap')))
+                
+                # Construct temporal graph structure
+                graph = Data(x=nodes,
+                             edge_index=edges.t().contiguous(),
+                             edge_attr=attributes.ravel(),
+                             y=torch.tensor(extracted_target, dtype=torch.float)
+                            )
+    
+                # Append to dataset and labels
+                dataset.append(graph)
+                labels.append(f'{material}-{polymorph}')
+    
+    
+    # Standardize dataset
+    dataset_std, labels_std, dataset_parameters = standardize_dataset(dataset, labels,
+                                                                      transformation='inverse-quadratic')
+
+    torch.save(labels,      f'{data_folder}/labels.pt')
+    torch.save(dataset,     f'{data_folder}/dataset.pt')
+    torch.save(dataset_std, f'{data_folder}/standardized_dataset.pt')
+    torch.save(labels_std,  f'{target_folder}/standardized_labels.pt')
+    
+    # Convert torch tensors to numpy arrays
+    numpy_dict = {}
+    for key, value in dataset_parameters.items():
+        try:
+            numpy_dict[key] = value.cpu().numpy().tolist()
+        except:
+            numpy_dict[key] = value
+    
+    # Dump the dictionary with numpy arrays to a JSON file
+    with open(f'{data_folder}/standardized_parameters.json', 'w') as json_file:
+        json.dump(numpy_dict, json_file)
 
 def standardize_dataset(dataset, labels, transformation=None):
     """Standardizes a given dataset (both nodes features and edge attributes).

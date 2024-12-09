@@ -3,3 +3,5 @@ torch
 seaborn
 simplejson
 scipy
+pymatgen
+torch_geometric

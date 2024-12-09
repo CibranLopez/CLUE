@@ -8,61 +8,6 @@ from pymatgen.core.structure import Structure
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-
-def get_atoms_in_unitcell(particle_types, composition, cell, atomic_masses, charges, electronegativities, ionization_energies, positions):
-    """Create a list with all nodes and their positions belonging to the unit cell.
-
-    Args:
-        particle_types      (list): type of particles (0, 1...).
-        composition
-        cell
-        atomic_masses       (dict):
-        charges             (dict):
-        electronegativities (dict):
-        ionization_energies (dict):
-        positions           (list): direct coordinates of particles.
-
-    Returns:
-        all_nodes     (list): features of each node in the box.
-        all_positions (list): positions of the respective nodes.
-    """
-
-    # Getting all nodes in the supercell
-    all_nodes     = []
-    all_positions = []
-    all_species   = []
-    for idx in range(len(particle_types)):
-        # Get particle type (index of type wrt composition in POSCAR)
-        particle_type = particle_types[idx]
-
-        # Name of the current species
-        species_name = composition[particle_type]
-
-        # Loading the node (mass, charge, electronegativity and ionization energy)
-        node = [float(atomic_masses[species_name]),
-                float(charges[species_name]),
-                float(electronegativities[species_name]),
-                float(ionization_energies[species_name])
-                ]
-
-        # Get the initial position
-        position_0 = positions[idx]
-        
-        # Verify that belongs to the unit cell
-        while np.any(position_0 >  1): position_0[np.where(position_0 > 1)]  -= 1
-        while np.any(position_0 < -1): position_0[np.where(position_0 < -1)] += 1
-        
-        # Convert to cartesian coordinates
-        position_cartesian_0 = np.dot(position_0, cell)
-
-        # Append this particle, which belong to the unit cell
-        # Afterward, we use this data to construct edge connections
-        all_nodes.append(node)
-        all_positions.append(position_cartesian_0)
-        all_species.append(species_name)
-    return all_nodes, all_positions, all_species
-
-
 def get_sphere_images_tessellation(atomic_data, structure, distance_threshold=6):
     """Gets the distances by pairs of particles, considering images with periodic boundary conditions (PBC).
 
@@ -192,33 +137,29 @@ def get_sphere_images_tessellation(atomic_data, structure, distance_threshold=6)
     return nodes, edges, attributes
 
 
-def graph_POSCAR_encoding(structure, encoding_type='voronoi', distance_threshold=6, periodicity=True):
+def graph_POSCAR_encoding(path_to_structure, distance_threshold=6):
     """Generates a graph parameters from a POSCAR.
-    There are the following implementations:
-        1. Voronoi tessellation.
-        2. All particles inside a sphere of radius distance_threshold.
-        3. Filled space given a cubic box of dimension [0-Lx, 0-Ly, 0-Lz] considering all necessary images.
-           It links every particle with the rest for the given set of nodes and edges.
 
     Args:
-        structure          (pymatgen Structure object): Structure from which the graph is to be generated.
-        encoding_type      (str):    Framework used for encoding the structure.
-        distance_threshold (float):  Distance threshold for sphere-images tessellation.
-        periodicity        (bool):   Whether or not to consider periodicity of the structure.
+        path_to_structure  (str):   Path to structure file from which the graph is generated.
+        distance_threshold (float): Distance threshold for sphere-images tessellation.
     Returns:
         nodes      (torch tensor): Generated nodes with corresponding features.
         edges      (torch tensor): Generated connections between nodes.
         attributes (torch tensor): Corresponding weights of the generated connections.
     """
 
+    # Load pymatgen structure object
+    structure = Structure.from_file(path_to_structure)
+    
     # Loading dictionary of atomic masses
     atomic_data = {}
-    with open('/home/claudio/cibran/Work/UPC/MP/input/atomic_masses.dat', 'r') as atomic_data_file:
+    with open('input/atomic_masses.dat', 'r') as atomic_data_file:
         for line in atomic_data_file:
             key, atomic_mass, charge, electronegativity, ionization_energy = line.split()
             atomic_data[key] = {
-                'atomic_mass':       float(atomic_mass) if atomic_mass != 'None' else None,
-                'charge':            int(charge) if charge != 'None' else None,
+                'atomic_mass':       float(atomic_mass)       if atomic_mass       != 'None' else None,
+                'charge':            int(charge)              if charge            != 'None' else None,
                 'electronegativity': float(electronegativity) if electronegativity != 'None' else None,
                 'ionization_energy': float(ionization_energy) if ionization_energy != 'None' else None
             }
