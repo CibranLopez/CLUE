@@ -71,12 +71,13 @@ def generate_dataset(data_path, targets, data_folder):
                 labels.append(f'{material}-{polymorph}')
     
     
+    torch.save(labels,  f'{data_folder}/labels.pt')
+    torch.save(dataset, f'{data_folder}/dataset.pt')
+    
     # Standardize dataset
     dataset_std, labels_std, dataset_parameters = standardize_dataset(dataset, labels,
                                                                       transformation='inverse-quadratic')
 
-    torch.save(labels,      f'{data_folder}/labels.pt')
-    torch.save(dataset,     f'{data_folder}/dataset.pt')
     torch.save(dataset_std, f'{data_folder}/standardized_dataset.pt')
     torch.save(labels_std,  f'{target_folder}/standardized_labels.pt')
     
@@ -188,3 +189,24 @@ def standardize_dataset(dataset, labels, transformation=None):
         'scale':          scale
     }
     return dataset_std, labels_std, dataset_parameters
+
+def check_finite_attributes(data):
+    """
+    Checks if all node and edge attributes in the graph are finite (i.e., not NaN, inf, or -inf).
+
+    Args:
+        data: A graph object containing node attributes (`data.x`) and edge attributes (`data.edge_attr`).
+
+    Returns:
+        bool: 
+            - True if all node and edge attributes are finite.
+            - False if any node or edge attributes are NaN, inf, or -inf.
+    """
+    # Check node attributes
+    if not torch.any(torch.isfinite(data.x)):
+        return False
+
+    # Check edge attributes
+    if not torch.any(torch.isfinite(data.edge_attr)):
+        return False
+    return True
