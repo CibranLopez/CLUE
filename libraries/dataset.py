@@ -79,7 +79,7 @@ def generate_dataset(data_path, targets, data_folder):
                                                                       transformation='inverse-quadratic')
 
     torch.save(dataset_std, f'{data_folder}/standardized_dataset.pt')
-    torch.save(labels_std,  f'{target_folder}/standardized_labels.pt')
+    torch.save(labels_std,  f'{data_folder}/standardized_labels.pt')
     
     # Convert torch tensors to numpy arrays
     numpy_dict = {}

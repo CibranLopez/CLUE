@@ -5,10 +5,11 @@ import torch.nn            as nn
 import networkx            as nx
 import torch
 import sys
+import collections
 
 from torch_geometric.data          import Data, Batch
 from torch.nn                      import Linear
-from torch_geometric.nn            import GraphConv
+from torch_geometric.nn            import GraphConv, global_mean_pool
 from torch_geometric.utils.convert import to_networkx
 
 # Checking if pytorch can run in GPU, else CPU
