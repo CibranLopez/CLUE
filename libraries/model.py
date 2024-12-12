@@ -116,7 +116,7 @@ class GCNN(torch.nn.Module):
         
         # Apply final linear layer to make prediction
         x = self.lin(x)
-        return x.relu()
+        return x
 
 def train(model, criterion, train_loader, target_factor, target_mean, optimizer):
     """Train the model using the provided optimizer and criterion on the training dataset.
