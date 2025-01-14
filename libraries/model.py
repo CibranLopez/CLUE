@@ -15,6 +15,14 @@ from torch_geometric.utils.convert import to_networkx
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+def estimate_uncertainty(r_dataset, t_dataset, model, net_uncertainty):
+
+    closest_distances = estimate_out_of_distribution(r_dataset, t_dataset, model)
+
+    prediction_uncertainty = net_uncertainty + net_uncertainty * closest_distances
+    return prediction_uncertainty
+    
+
 def estimate_out_of_distribution(r_dataset, t_dataset, model):
     """We use the pooling from a graph neural network, which is a vector representation of the
     material, to assess the similarity between the target graph with respect to the dataset.
