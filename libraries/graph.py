@@ -8,7 +8,11 @@ from pymatgen.core.structure import Structure
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def get_sphere_images_tessellation(atomic_data, structure, distance_threshold=6):
+def get_sphere_images_tessellation(
+        atomic_data,
+        structure,
+        distance_threshold=6
+):
     """Gets the distances by pairs of particles, considering images with periodic boundary conditions (PBC).
 
     Args:
@@ -137,7 +141,10 @@ def get_sphere_images_tessellation(atomic_data, structure, distance_threshold=6)
     return nodes, edges, attributes
 
 
-def graph_POSCAR_encoding(path_to_structure, distance_threshold=6):
+def graph_POSCAR_encoding(
+        path_to_structure,
+        distance_threshold=6
+):
     """Generates a graph parameters from a POSCAR.
 
     Args:

@@ -1,21 +1,21 @@
 import numpy               as np
-import matplotlib.pyplot   as plt
 import torch.nn.functional as F
-import torch.nn            as nn
-import networkx            as nx
 import torch
-import sys
-import collections
 
-from torch_geometric.data          import Data, Batch
-from torch.nn                      import Linear
-from torch_geometric.nn            import GraphConv, global_mean_pool
-from torch_geometric.utils.convert import to_networkx
+from torch_geometric.data   import Batch
+from torch_geometric.loader import DataLoader
+from torch.nn               import Linear
+from torch_geometric.nn     import GraphConv, global_mean_pool
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def estimate_uncertainty(r_dataset, t_dataset, model, net_uncertainty):
+def estimate_uncertainty(
+        r_dataset,
+        t_dataset,
+        model,
+        net_uncertainty
+):
 
     closest_distances = estimate_out_of_distribution(r_dataset, t_dataset, model)
 
@@ -23,7 +23,11 @@ def estimate_uncertainty(r_dataset, t_dataset, model, net_uncertainty):
     return prediction_uncertainty
     
 
-def estimate_out_of_distribution(r_dataset, t_dataset, model):
+def estimate_out_of_distribution(
+        r_dataset,
+        t_dataset,
+        model
+):
     """We use the pooling from a graph neural network, which is a vector representation of the
     material, to assess the similarity between the target graph with respect to the dataset.
 
@@ -126,7 +130,14 @@ class GCNN(torch.nn.Module):
         x = self.lin(x)
         return x
 
-def train(model, criterion, train_loader, target_factor, target_mean, optimizer):
+def train(
+        model,
+        criterion,
+        train_loader,
+        target_factor,
+        target_mean,
+        optimizer
+):
     """Train the model using the provided optimizer and criterion on the training dataset.
 
     Args:
@@ -177,7 +188,13 @@ def train(model, criterion, train_loader, target_factor, target_mean, optimizer)
     all_ground_truths = torch.cat(all_ground_truths) * target_factor + target_mean
     return avg_train_loss, all_predictions.cpu().numpy(), all_ground_truths.cpu().numpy()
 
-def test(model, criterion, test_loader, target_factor, target_mean):
+def test(
+        model,
+        criterion,
+        test_loader,
+        target_factor,
+        target_mean
+):
     """Evaluate the performance of a given model on a test dataset.
 
     Args:
@@ -194,7 +211,7 @@ def test(model, criterion, test_loader, target_factor, target_mean):
     all_predictions   = []
     all_ground_truths = []
     with torch.no_grad():
-        for data in test_loader:  # Iteratea in batches over the train/test dataset
+        for data in test_loader:  # Iterate in batches over the train/test dataset
             # Moving data to device
             data = data.to(device)
             
@@ -218,6 +235,56 @@ def test(model, criterion, test_loader, target_factor, target_mean):
     all_predictions   = torch.cat(all_predictions) * target_factor + target_mean
     all_ground_truths = torch.cat(all_ground_truths) * target_factor + target_mean
     return avg_test_loss, all_predictions.cpu().numpy(), all_ground_truths.cpu().numpy()
+
+
+def make_predictions(
+        reference_dataset,
+        pred_dataset,
+        model,
+        standardized_parameters
+):
+    """Make predictions.
+
+    Args:
+        reference_dataset       (list):            The reference dataset, as a list of graphs in PyTorch Geometric's Data format.
+        pred_dataset            (list):            List of graphs in PyTorch Geometric's Data format for predictions.
+        model                   (torch.nn.Module): PyTorch model for predictions.
+        standardized_parameters (dict):            Parameters needed to re-scale predicted properties from the dataset.
+
+    Returns:
+        numpy.ndarray: Predicted values.
+    """
+
+    # Read dataset parameters for re-scaling
+    target_mean = standardized_parameters['target_mean']
+    scale       = standardized_parameters['scale']
+    target_std  = standardized_parameters['target_std']
+
+    # Computing the predictions
+    dataset = DataLoader(pred_dataset, batch_size=64, shuffle=False)
+
+    predictions = []
+    uncertainties = []
+    with torch.no_grad():  # No gradients for prediction
+        for data in dataset:
+            # Moving data to device
+            data = data.to(device)
+
+            # Perform a single forward pass
+            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
+
+            # Estimate out of distribution
+            uncer = estimate_out_of_distribution(reference_dataset, data.to_data_list(), model)
+
+            # Append predictions to lists
+            predictions.append(pred.cpu().detach())
+            uncertainties.append(uncer)
+
+    # Concatenate predictions and ground truths into single arrays
+    predictions = torch.cat(predictions) * target_std / scale + target_mean
+    uncertainties = np.concatenate(uncertainties)
+    return predictions.cpu().numpy(), uncertainties
+
 
 class EarlyStopping():
     def __init__(self, patience=5, delta=0, model_name='model.pt'):

@@ -10,7 +10,11 @@ from pymatgen.core        import Structure
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def generate_dataset(data_path, targets, data_folder):
+def generate_dataset(
+        data_path,
+        targets,
+        data_folder
+):
     
     # Define basic dataset parameters for tracking data
     dataset_parameters = {
@@ -93,7 +97,12 @@ def generate_dataset(data_path, targets, data_folder):
     with open(f'{data_folder}/standardized_parameters.json', 'w') as json_file:
         json.dump(numpy_dict, json_file)
 
-def standardize_dataset(dataset, labels, transformation=None):
+
+def standardize_dataset(
+        dataset,
+        labels,
+        transformation=None
+):
     """Standardizes a given dataset (both nodes features and edge attributes).
     Typically, a normal distribution is applied, although it be easily modified to apply other distributions.
     Check those graphs with finite attributes and retains labels accordingly.
@@ -190,7 +199,45 @@ def standardize_dataset(dataset, labels, transformation=None):
     }
     return dataset_std, labels_std, dataset_parameters
 
-def check_finite_attributes(data):
+
+def standarize_dataset_from_keys(
+        dataset,
+        standardized_parameters
+):
+    """Standardize the dataset. Non-linear normalization is also implemented.
+
+    Args:
+        dataset                 (list):  List of graphs in PyTorch Geometric's Data format.
+        standardized_parameters (dict):  Parameters needed to re-scale predicted properties from the dataset.
+
+    Returns:
+        list: Standardized dataset.
+    """
+
+    # Read dataset parameters for re-scaling
+    edge_mean = standardized_parameters['edge_mean']
+    feat_mean = standardized_parameters['feat_mean']
+    scale     = standardized_parameters['scale']
+    edge_std  = standardized_parameters['edge_std']
+    feat_std  = standardized_parameters['feat_std']
+
+    # Check if non-linear standardization
+    if standardized_parameters['transformation'] == 'inverse-quadratic':
+        for data in dataset:
+            data.edge_attr = 1 / data.edge_attr.pow(2)
+
+    for data in dataset:
+        data.edge_attr = (data.edge_attr - edge_mean) * scale / edge_std
+
+    for feat_index in range(dataset[0].num_node_features):
+        for data in dataset:
+            data.x[:, feat_index] = (data.x[:, feat_index] - feat_mean[feat_index]) * scale / feat_std[feat_index]
+    return dataset
+
+
+def check_finite_attributes(
+        data
+):
     """
     Checks if all node and edge attributes in the graph are finite (i.e., not NaN, inf, or -inf).
 
