@@ -241,7 +241,8 @@ def make_predictions(
         reference_dataset,
         pred_dataset,
         model,
-        standardized_parameters
+        standardized_parameters,
+        net_uncertainty
 ):
     """Make predictions.
 
@@ -250,6 +251,7 @@ def make_predictions(
         pred_dataset            (list):            List of graphs in PyTorch Geometric's Data format for predictions.
         model                   (torch.nn.Module): PyTorch model for predictions.
         standardized_parameters (dict):            Parameters needed to re-scale predicted properties from the dataset.
+        net_uncertainty         (float):           Uncertainty associated to the network (e.g., from k-fold validation).
 
     Returns:
         numpy.ndarray: Predicted values.
@@ -273,8 +275,8 @@ def make_predictions(
             # Perform a single forward pass
             pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
 
-            # Estimate out of distribution
-            uncer = estimate_out_of_distribution(reference_dataset, data.to_data_list(), model)
+            # Estimate uncertainty
+            uncer = estimate_uncertainty(reference_dataset, data.to_data_list(), model, net_uncertainty)
 
             # Append predictions to lists
             predictions.append(pred.cpu().detach())
