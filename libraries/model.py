@@ -12,9 +12,10 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def estimate_uncertainty(
         r_dataset,
+        r_labels,
         t_dataset,
         model,
-        net_uncertainty
+        uncertainty_data
 ):
 
     closest_distances = estimate_out_of_distribution(r_dataset, t_dataset, model)
