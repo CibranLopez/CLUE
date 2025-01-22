@@ -2,7 +2,7 @@ import numpy               as np
 import torch.nn.functional as F
 import torch
 
-from scipy.interpolate      import RegularGridInterpolator
+from scipy.interpolate      import RBFInterpolator
 from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
 from torch.nn               import Linear
@@ -22,19 +22,20 @@ def estimate_uncertainty(
     # Generate embeddings for reference dataset
     r_batch = Batch.from_data_list(r_dataset).to(device)
     r_embeddings = model(r_batch.x, r_batch.edge_index, r_batch.edge_attr, r_batch.batch,
-                         return_graph_embedding=True)
+                         return_graph_embedding=True).cpu().numpy()
 
     # Generate embeddings for target dataset
     t_batch = Batch.from_data_list(t_dataset).to(device)
     t_embeddings = model(t_batch.x, t_batch.edge_index, t_batch.edge_attr, t_batch.batch,
-                         return_graph_embedding=True)
-
+                         return_graph_embedding=True).cpu().numpy()
+    
     # Extract uncertainty of each reference example
     r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
 
+    print(np.shape(r_embeddings), np.shape(t_embeddings), np.shape(r_uncertainties))
+
     # Create an interpolator
-    interpolator = RegularGridInterpolator(r_embeddings, r_uncertainties,
-                                           bounds_error=False, fill_value=None, method='linear')
+    interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
 
     # Look for the uncertainty of the target dataset
     prediction_uncertainty = interpolator(t_embeddings)
@@ -107,12 +108,12 @@ class GCNN(torch.nn.Module):
         torch.manual_seed(12345)
         
         # Define graph convolution layers
-        self.conv1 = GraphConv(features_channels, 512)
-        self.conv2 = GraphConv(512, 512)
+        self.conv1 = GraphConv(features_channels, 32)
+        self.conv2 = GraphConv(32, 32)
         
         # Define linear layers
-        self.linconv1 = Linear(512, 64)
-        self.linconv2 = Linear(64, 16)
+        self.linconv1 = Linear(32, 32)
+        self.linconv2 = Linear(32, 16)
         self.lin      = Linear(16, 1)
         
         self.pdropout = pdropout
@@ -257,10 +258,11 @@ def test(
 
 def make_predictions(
         reference_dataset,
+        reference_labels,
         pred_dataset,
         model,
         standardized_parameters,
-        net_uncertainty
+        reference_uncertainty_data
 ):
     """Make predictions.
 
@@ -294,7 +296,9 @@ def make_predictions(
             pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
 
             # Estimate uncertainty
-            uncer = estimate_uncertainty(reference_dataset, data.to_data_list(), model, ???)
+            uncer = estimate_uncertainty(reference_dataset, reference_labels,
+                                         data.to_data_list(), None,
+                                         model, reference_uncertainty_data)
 
             # Append predictions to lists
             predictions.append(pred.cpu().detach())
