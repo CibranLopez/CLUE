@@ -2,6 +2,7 @@ import numpy               as np
 import torch.nn.functional as F
 import torch
 
+from scipy.interpolate      import RegularGridInterpolator
 from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
 from torch.nn               import Linear
@@ -14,13 +15,29 @@ def estimate_uncertainty(
         r_dataset,
         r_labels,
         t_dataset,
+        t_labels,
         model,
-        uncertainty_data
+        r_uncertainty_data
 ):
+    # Generate embeddings for reference dataset
+    r_batch = Batch.from_data_list(r_dataset).to(device)
+    r_embeddings = model(r_batch.x, r_batch.edge_index, r_batch.edge_attr, r_batch.batch,
+                         return_graph_embedding=True)
 
-    closest_distances = estimate_out_of_distribution(r_dataset, t_dataset, model)
+    # Generate embeddings for target dataset
+    t_batch = Batch.from_data_list(t_dataset).to(device)
+    t_embeddings = model(t_batch.x, t_batch.edge_index, t_batch.edge_attr, t_batch.batch,
+                         return_graph_embedding=True)
 
-    prediction_uncertainty = net_uncertainty + net_uncertainty * closest_distances
+    # Extract uncertainty of each reference example
+    r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
+
+    # Create an interpolator
+    interpolator = RegularGridInterpolator(r_embeddings, r_uncertainties,
+                                           bounds_error=False, fill_value=None, method='linear')
+
+    # Look for the uncertainty of the target dataset
+    prediction_uncertainty = interpolator(t_embeddings)
     return prediction_uncertainty
     
 
@@ -277,7 +294,7 @@ def make_predictions(
             pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
 
             # Estimate uncertainty
-            uncer = estimate_uncertainty(reference_dataset, data.to_data_list(), model, net_uncertainty)
+            uncer = estimate_uncertainty(reference_dataset, data.to_data_list(), model, ???)
 
             # Append predictions to lists
             predictions.append(pred.cpu().detach())
