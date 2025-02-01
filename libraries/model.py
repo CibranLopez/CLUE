@@ -3,7 +3,7 @@ import torch.nn.functional as F
 import torch
 
 from scipy.interpolate      import RBFInterpolator
-from scipy.spatial          import ConvexHull
+from scipy.spatial          import ConvexHull, Delaunay
 from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
 from torch.nn               import Linear
@@ -16,41 +16,24 @@ def estimate_uncertainty(
         r_dataset,
         r_labels,
         t_dataset,
-        t_labels,
         model,
         r_uncertainty_data
 ):
 
     # Create a DataLoader for the reference dataset
-    # Process the reference dataset in batches using the DataLoader
-    r_embeddings = []
-    r_loader = DataLoader(r_dataset, batch_size=64, shuffle=False)
-    for r_batch in r_loader:
-        r_batch = r_batch.to(device)
-        r_embedding = model(
-            r_batch.x, r_batch.edge_index, r_batch.edge_attr, r_batch.batch,
-            return_graph_embedding=True
-        ).cpu().numpy()
-        r_embeddings.append(r_embedding)
-    r_embeddings = np.concatenate(r_embeddings, axis=0)  # Concatenate all batch embeddings into a single array
-    
+    r_embeddings = extract_embeddings(r_dataset, model)
+
     # Create a DataLoader for the target dataset
-    # Process the reference dataset in batches using the DataLoader
-    t_embeddings = []
-    t_loader = DataLoader(t_dataset, batch_size=64, shuffle=False)
-    for t_batch in t_loader:
-        t_batch = t_batch.to(device)
-        t_embedding = model(
-            t_batch.x, t_batch.edge_index, t_batch.edge_attr, t_batch.batch,
-            return_graph_embedding=True
-        ).cpu().numpy()
-        t_embeddings.append(t_embedding)
-    t_embeddings = np.concatenate(t_embeddings, axis=0)  # Concatenate all batch embeddings into a single array
+    t_embeddings = extract_embeddings(t_dataset, model)
 
     # Determine which points are in the interpolation/extrapolation regime
     #are_interpolated = is_interpolating(r_embeddings, t_embeddings)
     are_interpolated = [0]
-    
+    print(np.shape(r_embeddings), np.shape(t_embeddings))
+    hull = Delaunay(r_embeddings)
+    are_interpolated = hull.find_simplex(t_embeddings) >= tolerance
+    print(are_interpolated)
+
     # Extract uncertainty of each reference example
     r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
     
@@ -62,6 +45,29 @@ def estimate_uncertainty(
     return prediction_uncertainty, are_interpolated
 
 
+def extract_embeddings(
+        dataset,
+        model
+):
+    """Extract embeddings from a dataset using a trained model.
+    """
+    # Create a DataLoader for the dataset
+    loader = DataLoader(dataset, batch_size=64, shuffle=False)
+
+    # Process the reference dataset in batches using the DataLoader
+    embeddings = []
+    for batch in loader:
+        batch = batch.to(device)
+        embedding = model(
+            batch.x, batch.edge_index, batch.edge_attr, batch.batch,
+            return_graph_embedding=True
+        ).cpu().numpy()
+        embeddings.append(embedding)
+
+    # Concatenate all batch embeddings into a single array
+    return np.concatenate(embeddings, axis=0)
+
+"""
 def is_interpolating(
     r_embeddings,
     t_embeddings,
@@ -76,6 +82,10 @@ def is_interpolating(
     # Return which datapoints are or not within the convex-hull
     return np.all(np.dot(t_embeddings, A.T) + b <= tolerance, axis=1)
 
+    hull = Delaunay(r_embeddings)
+
+    return hull.find_simplex(t_embeddings) >= tolerance
+"""
 
 def estimate_out_of_distribution(
         r_dataset,
@@ -335,8 +345,7 @@ def make_predictions(
 
             # Estimate uncertainty
             uncer, interp = estimate_uncertainty(reference_dataset, reference_labels,
-                                                 data.to_data_list(), None,
-                                                 model, reference_uncertainty_data)
+                                                 data.to_data_list(), model, reference_uncertainty_data)
 
             # Append predictions to lists
             predictions.append(pred.cpu().detach())
