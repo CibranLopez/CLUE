@@ -3,6 +3,7 @@ import torch.nn.functional as F
 import torch
 
 from scipy.interpolate      import RBFInterpolator
+from scipy.spatial          import ConvexHull
 from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
 from torch.nn               import Linear
@@ -19,28 +20,62 @@ def estimate_uncertainty(
         model,
         r_uncertainty_data
 ):
-    # Generate embeddings for reference dataset
-    r_batch = Batch.from_data_list(r_dataset).to(device)
-    r_embeddings = model(r_batch.x, r_batch.edge_index, r_batch.edge_attr, r_batch.batch,
-                         return_graph_embedding=True).cpu().numpy()
 
-    # Generate embeddings for target dataset
-    t_batch = Batch.from_data_list(t_dataset).to(device)
-    t_embeddings = model(t_batch.x, t_batch.edge_index, t_batch.edge_attr, t_batch.batch,
-                         return_graph_embedding=True).cpu().numpy()
+    # Create a DataLoader for the reference dataset
+    # Process the reference dataset in batches using the DataLoader
+    r_embeddings = []
+    r_loader = DataLoader(r_dataset, batch_size=64, shuffle=False)
+    for r_batch in r_loader:
+        r_batch = r_batch.to(device)
+        r_embedding = model(
+            r_batch.x, r_batch.edge_index, r_batch.edge_attr, r_batch.batch,
+            return_graph_embedding=True
+        ).cpu().numpy()
+        r_embeddings.append(r_embedding)
+    r_embeddings = np.concatenate(r_embeddings, axis=0)  # Concatenate all batch embeddings into a single array
+    
+    # Create a DataLoader for the target dataset
+    # Process the reference dataset in batches using the DataLoader
+    t_embeddings = []
+    t_loader = DataLoader(t_dataset, batch_size=64, shuffle=False)
+    for t_batch in t_loader:
+        t_batch = t_batch.to(device)
+        t_embedding = model(
+            t_batch.x, t_batch.edge_index, t_batch.edge_attr, t_batch.batch,
+            return_graph_embedding=True
+        ).cpu().numpy()
+        t_embeddings.append(t_embedding)
+    t_embeddings = np.concatenate(t_embeddings, axis=0)  # Concatenate all batch embeddings into a single array
+
+    # Determine which points are in the interpolation/extrapolation regime
+    #are_interpolated = is_interpolating(r_embeddings, t_embeddings)
+    are_interpolated = [0]
     
     # Extract uncertainty of each reference example
     r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
-
-    print(np.shape(r_embeddings), np.shape(t_embeddings), np.shape(r_uncertainties))
-
+    
     # Create an interpolator
     interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
 
     # Look for the uncertainty of the target dataset
     prediction_uncertainty = interpolator(t_embeddings)
-    return prediction_uncertainty
+    return prediction_uncertainty, are_interpolated
+
+
+def is_interpolating(
+    r_embeddings,
+    t_embeddings,
+    tolerance=1e-9
+):
     
+    # Generate convex-hull structure
+    hull = ConvexHull(r_embeddings)
+    A = hull.equations[:, :-1]
+    b = hull.equations[:, -1]
+
+    # Return which datapoints are or not within the convex-hull
+    return np.all(np.dot(t_embeddings, A.T) + b <= tolerance, axis=1)
+
 
 def estimate_out_of_distribution(
         r_dataset,
@@ -87,6 +122,7 @@ def estimate_out_of_distribution(
     # Move results to CPU and return as a list
     return closest_distances.cpu().numpy()
 
+
 class GCNN(torch.nn.Module):
     """Graph convolution neural network.
     """
@@ -131,8 +167,6 @@ class GCNN(torch.nn.Module):
         
         # Apply global mean pooling to reduce dimensionality
         x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]
-        if return_graph_embedding:
-            return x
 
         # Apply dropout regularization
         x = F.dropout(x, p=self.pdropout, training=self.training)
@@ -141,6 +175,8 @@ class GCNN(torch.nn.Module):
         x = self.linconv1(x)
         x = x.relu()
         x = self.linconv2(x)
+        if return_graph_embedding:
+            return x
         x = x.relu()
         
         ## REGRESSION
@@ -149,6 +185,7 @@ class GCNN(torch.nn.Module):
         x = self.lin(x)
         return x
 
+        
 def train(
         model,
         criterion,
@@ -278,15 +315,16 @@ def make_predictions(
     """
 
     # Read dataset parameters for re-scaling
-    target_mean = standardized_parameters['target_mean']
-    scale       = standardized_parameters['scale']
-    target_std  = standardized_parameters['target_std']
+    target_mean = standardized_parameters['target_mean'].item()
+    scale       = standardized_parameters['scale'].item()
+    target_std  = standardized_parameters['target_std'].item()
 
     # Computing the predictions
     dataset = DataLoader(pred_dataset, batch_size=64, shuffle=False)
 
-    predictions = []
+    predictions   = []
     uncertainties = []
+    are_interp    = []
     with torch.no_grad():  # No gradients for prediction
         for data in dataset:
             # Moving data to device
@@ -296,18 +334,20 @@ def make_predictions(
             pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
 
             # Estimate uncertainty
-            uncer = estimate_uncertainty(reference_dataset, reference_labels,
-                                         data.to_data_list(), None,
-                                         model, reference_uncertainty_data)
+            uncer, interp = estimate_uncertainty(reference_dataset, reference_labels,
+                                                 data.to_data_list(), None,
+                                                 model, reference_uncertainty_data)
 
             # Append predictions to lists
             predictions.append(pred.cpu().detach())
             uncertainties.append(uncer)
+            are_interp.append(interp)
 
     # Concatenate predictions and ground truths into single arrays
-    predictions = torch.cat(predictions) * target_std / scale + target_mean
+    predictions   = torch.cat(predictions) * target_std / scale + target_mean
     uncertainties = np.concatenate(uncertainties)
-    return predictions.cpu().numpy(), uncertainties
+    are_interp    = np.concatenate(are_interp)
+    return predictions.cpu().numpy(), uncertainties, are_interp
 
 
 class EarlyStopping():
