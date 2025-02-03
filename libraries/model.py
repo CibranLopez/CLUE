@@ -8,6 +8,7 @@ from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
 from torch.nn               import Linear
 from torch_geometric.nn     import GraphConv, global_mean_pool
+from sklearn.decomposition import PCA
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -28,11 +29,16 @@ def estimate_uncertainty(
 
     # Determine which points are in the interpolation/extrapolation regime
     #are_interpolated = is_interpolating(r_embeddings, t_embeddings)
-    are_interpolated = [0]
-    print(np.shape(r_embeddings), np.shape(t_embeddings))
-    hull = Delaunay(r_embeddings)
-    are_interpolated = hull.find_simplex(t_embeddings) >= tolerance
-    print(are_interpolated)
+    #are_interpolated = [0]
+    
+    pca = PCA(n_components=5)  # Reduce to 5 dimensions
+    r_embeddings_reduced = pca.fit_transform(r_embeddings)
+    hull = Delaunay(r_embeddings_reduced)
+
+    t_embeddings_reduced = pca.transform(t_embeddings)
+    
+    tolerance = 1e-9
+    are_interpolated = hull.find_simplex(t_embeddings_reduced) >= tolerance
 
     # Extract uncertainty of each reference example
     r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
@@ -67,7 +73,7 @@ def extract_embeddings(
     # Concatenate all batch embeddings into a single array
     return np.concatenate(embeddings, axis=0)
 
-"""
+
 def is_interpolating(
     r_embeddings,
     t_embeddings,
@@ -82,10 +88,6 @@ def is_interpolating(
     # Return which datapoints are or not within the convex-hull
     return np.all(np.dot(t_embeddings, A.T) + b <= tolerance, axis=1)
 
-    hull = Delaunay(r_embeddings)
-
-    return hull.find_simplex(t_embeddings) >= tolerance
-"""
 
 def estimate_out_of_distribution(
         r_dataset,
@@ -353,10 +355,10 @@ def make_predictions(
             are_interp.append(interp)
 
     # Concatenate predictions and ground truths into single arrays
-    predictions   = torch.cat(predictions) * target_std / scale + target_mean
+    predictions   = np.array((torch.cat(predictions) * target_std / scale + target_mean).cpu().numpy())
     uncertainties = np.concatenate(uncertainties)
     are_interp    = np.concatenate(are_interp)
-    return predictions.cpu().numpy(), uncertainties, are_interp
+    return predictions, uncertainties, are_interp
 
 
 class EarlyStopping():
