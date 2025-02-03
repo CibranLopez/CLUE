@@ -3,43 +3,46 @@ import torch.nn.functional as F
 import torch
 
 from scipy.interpolate      import RBFInterpolator
-from scipy.spatial          import ConvexHull, Delaunay
+from scipy.spatial          import Delaunay
 from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
 from torch.nn               import Linear
 from torch_geometric.nn     import GraphConv, global_mean_pool
-from sklearn.decomposition import PCA
+from sklearn.decomposition  import PCA
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
-def estimate_uncertainty(
+def analyze_uncertainty(
         r_dataset,
         r_labels,
         t_dataset,
         model,
         r_uncertainty_data
 ):
-
+    """
+    """
     # Create a DataLoader for the reference dataset
     r_embeddings = extract_embeddings(r_dataset, model)
 
     # Create a DataLoader for the target dataset
     t_embeddings = extract_embeddings(t_dataset, model)
 
+    # Determine the uncertainty on the predictions
+    t_uncertainties = estimate_uncertainty(r_embeddings, r_uncertainties, t_embeddings)
+
     # Determine which points are in the interpolation/extrapolation regime
-    #are_interpolated = is_interpolating(r_embeddings, t_embeddings)
-    #are_interpolated = [0]
-    
-    pca = PCA(n_components=5)  # Reduce to 5 dimensions
-    r_embeddings_reduced = pca.fit_transform(r_embeddings)
-    hull = Delaunay(r_embeddings_reduced)
+    t_interpolations = is_interpolating(r_embeddings, t_embeddings)
+    return t_uncertainties, t_interpolations
 
-    t_embeddings_reduced = pca.transform(t_embeddings)
-    
-    tolerance = 1e-9
-    are_interpolated = hull.find_simplex(t_embeddings_reduced) >= tolerance
 
+def estimate_uncertainty(
+    r_embeddings,
+    r_uncertainties,
+    t_embeddings
+):
+    """
+    """
     # Extract uncertainty of each reference example
     r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
     
@@ -47,8 +50,8 @@ def estimate_uncertainty(
     interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
 
     # Look for the uncertainty of the target dataset
-    prediction_uncertainty = interpolator(t_embeddings)
-    return prediction_uncertainty, are_interpolated
+    t_uncertainties = interpolator(t_embeddings)
+    return t_uncertainties
 
 
 def extract_embeddings(
@@ -77,16 +80,22 @@ def extract_embeddings(
 def is_interpolating(
     r_embeddings,
     t_embeddings,
-    tolerance=1e-9
+    tolerance=1e-9,
+    n_components=5
 ):
-    
-    # Generate convex-hull structure
-    hull = ConvexHull(r_embeddings)
-    A = hull.equations[:, :-1]
-    b = hull.equations[:, -1]
 
-    # Return which datapoints are or not within the convex-hull
-    return np.all(np.dot(t_embeddings, A.T) + b <= tolerance, axis=1)
+    # Reduce dimensionlaity
+    pca = PCA(n_components=n_components)
+    r_embeddings_reduced = pca.fit_transform(r_embeddings)
+    t_embeddings_reduced = pca.transform(t_embeddings)
+    
+    # Generate convex hull with reduced data (using Delaunay approach)
+    hull = Delaunay(r_embeddings_reduced)
+
+    # Determine interpolation/extrapolation regimes based on tolerance threshold
+    tolerance = 1e-9
+    are_interpolated = hull.find_simplex(t_embeddings_reduced) >= tolerance
+    return are_interpolated
 
 
 def estimate_out_of_distribution(
@@ -327,38 +336,38 @@ def make_predictions(
     """
 
     # Read dataset parameters for re-scaling
-    target_mean = standardized_parameters['target_mean'].item()
-    scale       = standardized_parameters['scale'].item()
-    target_std  = standardized_parameters['target_std'].item()
+    target_mean = standardized_parameters['target_mean'].item().cpu().numpy()
+    scale       = standardized_parameters['scale'].item().cpu().numpy()
+    target_std  = standardized_parameters['target_std'].item().cpu().numpy()
 
     # Computing the predictions
     dataset = DataLoader(pred_dataset, batch_size=64, shuffle=False)
 
-    predictions   = []
-    uncertainties = []
-    are_interp    = []
+    predictions    = []
+    uncertainties  = []
+    interpolations = []
     with torch.no_grad():  # No gradients for prediction
         for data in dataset:
             # Moving data to device
             data = data.to(device)
 
             # Perform a single forward pass
-            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
+            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten().cpu().detach()
 
             # Estimate uncertainty
-            uncer, interp = estimate_uncertainty(reference_dataset, reference_labels,
-                                                 data.to_data_list(), model, reference_uncertainty_data)
+            uncer, interp = analyze_uncertainty(reference_dataset, reference_labels,
+                                                data.to_data_list(), model, reference_uncertainty_data)
 
             # Append predictions to lists
-            predictions.append(pred.cpu().detach())
+            predictions.append(pred)
             uncertainties.append(uncer)
-            are_interp.append(interp)
+            interpolations.append(interp)
 
     # Concatenate predictions and ground truths into single arrays
-    predictions   = np.array((torch.cat(predictions) * target_std / scale + target_mean).cpu().numpy())
-    uncertainties = np.concatenate(uncertainties)
-    are_interp    = np.concatenate(are_interp)
-    return predictions, uncertainties, are_interp
+    predictions    = np.array(torch.cat(predictions) * target_std / scale + target_mean)  # De-standardize predictions
+    uncertainties  = np.concatenate(uncertainties)
+    interpolations = np.concatenate(interpolations)
+    return predictions, uncertainties, interpolations
 
 
 class EarlyStopping():
