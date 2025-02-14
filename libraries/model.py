@@ -29,16 +29,18 @@ def analyze_uncertainty(
     t_embeddings = extract_embeddings(t_dataset, model)
 
     # Determine the uncertainty on the predictions
-    t_uncertainties = estimate_uncertainty(r_embeddings, r_uncertainties, t_embeddings)
+    t_uncertainties = estimate_uncertainty(r_embeddings, r_labels, r_uncertainty_data, t_embeddings)
 
     # Determine which points are in the interpolation/extrapolation regime
     t_interpolations = is_interpolating(r_embeddings, t_embeddings)
+    t_interpolations = [0]*len(t_embeddings)
     return t_uncertainties, t_interpolations
 
 
 def estimate_uncertainty(
     r_embeddings,
-    r_uncertainties,
+    r_labels,
+    r_uncertainty_data,
     t_embeddings
 ):
     """
@@ -61,7 +63,7 @@ def extract_embeddings(
     """Extract embeddings from a dataset using a trained model.
     """
     # Create a DataLoader for the dataset
-    loader = DataLoader(dataset, batch_size=64, shuffle=False)
+    loader = DataLoader(dataset, batch_size=128, shuffle=False)
 
     # Process the reference dataset in batches using the DataLoader
     embeddings = []
@@ -93,8 +95,8 @@ def is_interpolating(
     hull = Delaunay(r_embeddings_reduced)
 
     # Determine interpolation/extrapolation regimes based on tolerance threshold
-    tolerance = 1e-9
-    are_interpolated = hull.find_simplex(t_embeddings_reduced) >= tolerance
+    tolerance = 1e-3
+    are_interpolated = hull.find_simplex(t_embeddings_reduced) <= tolerance
     return are_interpolated
 
 
@@ -309,7 +311,7 @@ def test(
     avg_test_loss = test_loss / len(test_loader)
     
     # Concatenate predictions and ground truths into single arrays
-    all_predictions   = torch.cat(all_predictions) * target_factor + target_mean
+    all_predictions   = torch.cat(all_predictions)   * target_factor + target_mean
     all_ground_truths = torch.cat(all_ground_truths) * target_factor + target_mean
     return avg_test_loss, all_predictions.cpu().numpy(), all_ground_truths.cpu().numpy()
 
@@ -335,13 +337,15 @@ def make_predictions(
         numpy.ndarray: Predicted values.
     """
 
+    model.eval()
+    
     # Read dataset parameters for re-scaling
-    target_mean = standardized_parameters['target_mean'].item().cpu().numpy()
-    scale       = standardized_parameters['scale'].item().cpu().numpy()
-    target_std  = standardized_parameters['target_std'].item().cpu().numpy()
+    target_mean = standardized_parameters['target_mean'].to(device)
+    scale       = standardized_parameters['scale'].to(device)
+    target_std  = standardized_parameters['target_std'].to(device)
 
     # Computing the predictions
-    dataset = DataLoader(pred_dataset, batch_size=64, shuffle=False)
+    dataset = DataLoader(pred_dataset, batch_size=128, shuffle=False, pin_memory=True)
 
     predictions    = []
     uncertainties  = []
@@ -352,7 +356,7 @@ def make_predictions(
             data = data.to(device)
 
             # Perform a single forward pass
-            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten().cpu().detach()
+            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten().detach()
 
             # Estimate uncertainty
             uncer, interp = analyze_uncertainty(reference_dataset, reference_labels,
@@ -363,8 +367,11 @@ def make_predictions(
             uncertainties.append(uncer)
             interpolations.append(interp)
 
+    # De-standardize predictions
+    predictions = torch.cat(predictions) * target_std / scale + target_mean
+    
     # Concatenate predictions and ground truths into single arrays
-    predictions    = np.array(torch.cat(predictions) * target_std / scale + target_mean)  # De-standardize predictions
+    predictions    = np.array(predictions.cpu().numpy())
     uncertainties  = np.concatenate(uncertainties)
     interpolations = np.concatenate(interpolations)
     return predictions, uncertainties, interpolations
