@@ -20,8 +20,20 @@ def analyze_uncertainty(
         model,
         r_uncertainty_data
 ):
+    """Estimate uncertainty on predictions and whether the target dataset is in the interpolation regime.
+
+    Args:
+        r_dataset (list):            Reference dataset, as a list of graphs in PyTorch Geometric's Data format.
+        r_labels  (list):            Reference labels.
+        t_dataset (list):            Target dataset, as a list of graphs in PyTorch Geometric's Data format.
+        model     (torch.nn.Module): The trained model.
+        r_uncertainty_data (dict):   Uncertainty data for the reference dataset.
+
+    Returns:
+        numpy.ndarray: Uncertainties of the target dataset.
+        numpy.ndarray: Boolean array indicating if the target embeddings
     """
-    """
+
     # Create a DataLoader for the reference dataset
     r_embeddings = extract_embeddings(r_dataset, model)
 
@@ -33,7 +45,6 @@ def analyze_uncertainty(
 
     # Determine which points are in the interpolation/extrapolation regime
     t_interpolations = is_interpolating(r_embeddings, t_embeddings)
-    t_interpolations = [0]*len(t_embeddings)
     return t_uncertainties, t_interpolations
 
 
@@ -43,7 +54,16 @@ def estimate_uncertainty(
     r_uncertainty_data,
     t_embeddings
 ):
-    """
+    """Using a reference dataset, we estimate the uncertainty of the target dataset by interpolation.
+
+    Args:
+        r_embeddings (numpy.ndarray): Reference embeddings.
+        r_labels     (list):           Reference labels.
+        r_uncertainty_data (dict):     Uncertainty data for the reference dataset.
+        t_embeddings (numpy.ndarray): Target embeddings.
+
+    Returns:
+        numpy.ndarray: Uncertainties of the target dataset.
     """
     # Extract uncertainty of each reference example
     r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
@@ -61,6 +81,13 @@ def extract_embeddings(
         model
 ):
     """Extract embeddings from a dataset using a trained model.
+
+    Args:
+        dataset (list):            Dataset, as a list of graphs in PyTorch Geometric's Data format.
+        model   (torch.nn.Module): The trained model.
+
+    Returns:
+        numpy.ndarray: Embeddings extracted from the dataset.
     """
     # Create a DataLoader for the dataset
     loader = DataLoader(dataset, batch_size=128, shuffle=False)
@@ -82,21 +109,31 @@ def extract_embeddings(
 def is_interpolating(
     r_embeddings,
     t_embeddings,
-    tolerance=1e-9,
     n_components=5
 ):
+    """Check if the target embeddings are in the interpolation regime.
 
-    # Reduce dimensionlaity
+    Args:
+        r_embeddings (numpy.ndarray): Reference embeddings.
+        t_embeddings (numpy.ndarray): Target embeddings.
+        tolerance    (float):          Tolerance threshold for interpolation.
+        n_components (int):            Number of components for PCA.
+
+    Returns:
+        numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
+    """
     pca = PCA(n_components=n_components)
     r_embeddings_reduced = pca.fit_transform(r_embeddings)
     t_embeddings_reduced = pca.transform(t_embeddings)
-    
+
     # Generate convex hull with reduced data (using Delaunay approach)
     hull = Delaunay(r_embeddings_reduced)
 
-    # Determine interpolation/extrapolation regimes based on tolerance threshold
-    tolerance = 1e-3
-    are_interpolated = hull.find_simplex(t_embeddings_reduced) <= tolerance
+    # Check if the points are inside the convex hull
+    simplex_indices = hull.find_simplex(t_embeddings_reduced)
+
+    # Convert to boolean: True for interpolation, False for extrapolation
+    are_interpolated = simplex_indices != -1
     return are_interpolated
 
 
@@ -117,7 +154,6 @@ def estimate_out_of_distribution(
         list ints:   Indexes of the closest example referred to the reference dataset.
         list floats: Distances to the distribution.
     """
-
     # Generate embeddings for target dataset
     t_batch = Batch.from_data_list(t_dataset).to(device)
     t_embeddings = model(t_batch.x, t_batch.edge_index, t_batch.edge_attr, t_batch.batch,
@@ -160,7 +196,6 @@ class GCNN(torch.nn.Module):
         Returns:
             None
         """
-        
         super(GCNN, self).__init__()
         
         # Set random seed for reproducibility
@@ -228,7 +263,6 @@ def train(
     Returns:
         float: The average training loss.
     """
-    
     model.train()
     train_loss = 0
     all_predictions   = []
@@ -267,6 +301,7 @@ def train(
     all_ground_truths = torch.cat(all_ground_truths) * target_factor + target_mean
     return avg_train_loss, all_predictions.cpu().numpy(), all_ground_truths.cpu().numpy()
 
+
 def test(
         model,
         criterion,
@@ -284,7 +319,6 @@ def test(
     Returns:
         float: The average loss on the test dataset.
     """
-    
     model.eval()
     test_loss = 0
     all_predictions   = []
@@ -324,19 +358,18 @@ def make_predictions(
         standardized_parameters,
         reference_uncertainty_data
 ):
-    """Make predictions.
+    """Make predictions on a dataset using a trained model.
 
     Args:
-        reference_dataset       (list):            The reference dataset, as a list of graphs in PyTorch Geometric's Data format.
-        pred_dataset            (list):            List of graphs in PyTorch Geometric's Data format for predictions.
-        model                   (torch.nn.Module): PyTorch model for predictions.
-        standardized_parameters (dict):            Parameters needed to re-scale predicted properties from the dataset.
-        net_uncertainty         (float):           Uncertainty associated to the network (e.g., from k-fold validation).
-
+        reference_dataset (list):            Reference dataset, as a list of graphs in PyTorch Geometric's Data format.
+        reference_labels  (list):            Reference labels.
+        pred_dataset      (list):            Prediction dataset, as a list of graphs in PyTorch Geometric's Data format.
+        model             (torch.nn.Module): The trained model.
+        standardized_parameters (dict):      Standardized parameters for rescaling the predictions.
+        reference_uncertainty_data (dict):   Uncertainty data for the reference dataset.
     Returns:
         numpy.ndarray: Predicted values.
     """
-
     model.eval()
     
     # Read dataset parameters for re-scaling
