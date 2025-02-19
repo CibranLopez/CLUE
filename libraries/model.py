@@ -33,7 +33,6 @@ def analyze_uncertainty(
 
     # Determine which points are in the interpolation/extrapolation regime
     t_interpolations = is_interpolating(r_embeddings, t_embeddings)
-    t_interpolations = [0]*len(t_embeddings)
     return t_uncertainties, t_interpolations
 
 
@@ -82,7 +81,6 @@ def extract_embeddings(
 def is_interpolating(
     r_embeddings,
     t_embeddings,
-    tolerance=1e-9,
     n_components=5
 ):
 
@@ -94,9 +92,11 @@ def is_interpolating(
     # Generate convex hull with reduced data (using Delaunay approach)
     hull = Delaunay(r_embeddings_reduced)
 
-    # Determine interpolation/extrapolation regimes based on tolerance threshold
-    tolerance = 1e-3
-    are_interpolated = hull.find_simplex(t_embeddings_reduced) <= tolerance
+    # Check if the points are inside the convex hull
+    simplex_indices = hull.find_simplex(t_embeddings_reduced)
+
+    # Convert to boolean: True for interpolation, False for extrapolation
+    are_interpolated = simplex_indices != -1
     return are_interpolated
 
 
