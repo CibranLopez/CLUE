@@ -210,9 +210,11 @@ def standardize_dataset_from_keys(
     # Read dataset parameters for re-scaling
     edge_mean   = standardized_parameters['edge_mean']
     feat_mean   = standardized_parameters['feat_mean']
+    target_mean = standardized_parameters['target_mean']
     scale       = standardized_parameters['scale']
     edge_std    = standardized_parameters['edge_std']
     feat_std    = standardized_parameters['feat_std']
+    target_std  = standardized_parameters['target_std']
 
     # Check if non-linear standardization
     if standardized_parameters['transformation'] == 'inverse-quadratic':
@@ -221,6 +223,9 @@ def standardize_dataset_from_keys(
 
     for data in dataset:
         data.edge_attr = (data.edge_attr - edge_mean) * scale / edge_std
+
+    for data in dataset:
+        data.y = (data.y - target_mean) * scale / target_std
 
     for feat_index in range(dataset[0].num_node_features):
         for data in dataset:
