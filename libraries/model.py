@@ -15,7 +15,6 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 def analyze_uncertainty(
         r_dataset,
-        r_labels,
         t_dataset,
         model,
         r_uncertainty_data
@@ -24,7 +23,6 @@ def analyze_uncertainty(
 
     Args:
         r_dataset (list):            Reference dataset, as a list of graphs in PyTorch Geometric's Data format.
-        r_labels  (list):            Reference labels.
         t_dataset (list):            Target dataset, as a list of graphs in PyTorch Geometric's Data format.
         model     (torch.nn.Module): The trained model.
         r_uncertainty_data (dict):   Uncertainty data for the reference dataset.
@@ -39,6 +37,9 @@ def analyze_uncertainty(
 
     # Create a DataLoader for the target dataset
     t_embeddings = extract_embeddings(t_dataset, model)
+
+    # Extract labels from r_dataset
+    r_labels = [data.label for data in r_dataset]
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels, r_uncertainty_data, t_embeddings)
@@ -352,7 +353,6 @@ def test(
 
 def make_predictions(
         reference_dataset,
-        reference_labels,
         pred_dataset,
         model,
         standardized_parameters,
@@ -362,7 +362,6 @@ def make_predictions(
 
     Args:
         reference_dataset (list):            Reference dataset, as a list of graphs in PyTorch Geometric's Data format.
-        reference_labels  (list):            Reference labels.
         pred_dataset      (list):            Prediction dataset, as a list of graphs in PyTorch Geometric's Data format.
         model             (torch.nn.Module): The trained model.
         standardized_parameters (dict):      Standardized parameters for rescaling the predictions.
@@ -392,7 +391,7 @@ def make_predictions(
             pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten().detach()
 
             # Estimate uncertainty
-            uncer, interp = analyze_uncertainty(reference_dataset, reference_labels,
+            uncer, interp = analyze_uncertainty(reference_dataset,
                                                 data.to_data_list(), model, reference_uncertainty_data)
 
             # Append predictions to lists
@@ -425,7 +424,7 @@ class EarlyStopping():
         self.counter = 0
         self.best_score = None
         self.early_stop = False
-        self.val_loss_min = np.Inf
+        self.val_loss_min = np.inf
         self.model_name = model_name
 
     def __call__(self, val_loss, model):

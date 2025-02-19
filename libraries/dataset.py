@@ -3,9 +3,9 @@ import torch
 import json
 import os
 
-from libraries.graph      import graph_POSCAR_encoding
+import libraries.graph as clg
+
 from torch_geometric.data import Data
-from pymatgen.core        import Structure
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -18,9 +18,9 @@ def generate_dataset(
     
     # Define basic dataset parameters for tracking data
     dataset_parameters = {
-        'input_folder':       data_path,
-        'output_folder':      data_folder,
-        'target':             targets
+        'input_folder':  data_path,
+        'output_folder': data_folder,
+        'target':        targets
     }
     
     if not os.path.exists(data_folder):
@@ -34,7 +34,6 @@ def generate_dataset(
     
     # Read all materials within the database
     dataset = []
-    labels  = []
     for material in os.listdir(data_path):
         # Check polymorph is a folder
         path_to_material = f'{data_path}/{material}'
@@ -51,7 +50,7 @@ def generate_dataset(
                 print(f'\t{polymorph}')
                 
                 try:
-                    nodes, edges, attributes = graph_POSCAR_encoding(f'{path_to_POSCAR}/POSCAR')
+                    nodes, edges, attributes = clg.graph_POSCAR_encoding(f'{path_to_POSCAR}/POSCAR')
                 except:
                     print(f'\tError: {material} {polymorph} not loaded')
                     continue
@@ -67,20 +66,18 @@ def generate_dataset(
                 graph = Data(x=nodes,
                              edge_index=edges.t().contiguous(),
                              edge_attr=attributes.ravel(),
-                             y=torch.tensor(extracted_target, dtype=torch.float)
+                             y=torch.tensor(extracted_target, dtype=torch.float),
+                             label=f'{material} {polymorph}'
                             )
     
                 # Append to dataset and labels
                 dataset.append(graph)
-                labels.append(f'{material}-{polymorph}')
+
     
-    
-    torch.save(labels,  f'{data_folder}/labels.pt')
     torch.save(dataset, f'{data_folder}/dataset.pt')
     
     # Standardize dataset
-    dataset_std, labels_std, dataset_parameters = standardize_dataset(dataset, labels,
-                                                                      transformation='inverse-quadratic')
+    dataset_std, labels_std, dataset_parameters = standardize_dataset(dataset, transformation='inverse-quadratic')
 
     torch.save(dataset_std, f'{data_folder}/standardized_dataset.pt')
     torch.save(labels_std,  f'{data_folder}/standardized_labels.pt')
@@ -100,7 +97,6 @@ def generate_dataset(
 
 def standardize_dataset(
         dataset,
-        labels,
         transformation=None
 ):
     """Standardizes a given dataset (both nodes features and edge attributes).
@@ -111,7 +107,6 @@ def standardize_dataset(
 
     Args:
         dataset        (list): List containing graph structures.
-        labels         (list): List containing graph labels.
         transformation (str):  Type of transformation strategy for edge attributes (None, 'inverse-quadratic').
 
     Returns:
@@ -123,11 +118,9 @@ def standardize_dataset(
 
     # Clone the dataset and labels
     dataset_std = []
-    labels_std  = []
-    for graph, label in zip(dataset, labels):
+    for graph in dataset:
         if check_finite_attributes(graph):
             dataset_std.append(graph.clone())
-            labels_std.append(label)
 
     # Number of graphs
     n_graphs = len(dataset_std)
@@ -197,7 +190,7 @@ def standardize_dataset(
         'feat_std':       feat_std,
         'scale':          scale
     }
-    return dataset_std, labels_std, dataset_parameters
+    return dataset_std, dataset_parameters
 
 
 def standardize_dataset_from_keys(
@@ -277,72 +270,64 @@ def split_dataset(
     val_dataset   = dataset[train_size:-test_size]
     test_dataset  = dataset[-test_size:]
 
-    train_labels = labels[:train_size]
-    val_labels   = labels[train_size:-test_size]
-    test_labels  = labels[-test_size:]
-
     print(f'Number of training   graphs: {len(train_dataset)}')
     print(f'Number of validation graphs: {len(val_dataset)}')
     print(f'Number of testing    graphs: {len(test_dataset)}')
-    return train_dataset, train_labels, val_dataset, val_labels, test_dataset, test_labels
+    return train_dataset, val_dataset, test_dataset
 
 
 def load_datasets(
         files_names
 ):
-    train_dataset = torch.load(files_names['train_dt_std_name'])
-    train_labels = torch.load(files_names['train_lb_std_name'])
-
-    val_dataset = torch.load(files_names['val_dt_std_name'])
-    val_labels = torch.load(files_names['val_lb_std_name'])
-
-    test_dataset = torch.load(files_names['test_dt_std_name'])
-    test_labels = torch.load(files_names['test_lb_std_name'])
+    train_dataset = torch.load(files_names['train_dt_std_name'], weights_only=False)
+    val_dataset   = torch.load(files_names['val_dt_std_name'],   weights_only=False)
+    test_dataset  = torch.load(files_names['test_dt_std_name'],  weights_only=False)
 
     standardized_parameters = load_json(files_names['std_param_name'])
-    return train_dataset, train_labels, val_dataset, val_labels, test_dataset, test_labels, standardized_parameters
+    return train_dataset, val_dataset, test_dataset, standardized_parameters
 
 
 def save_datasets(
         train_dataset,
-        train_labels,
         val_dataset,
-        val_labels,
         test_dataset,
-        test_labels,
         files_names
 ):
     torch.save(train_dataset, files_names['train_dt_std_name'])
-    torch.save(train_labels,  files_names['train_lb_std_name'])
-
-    torch.save(val_dataset, files_names['val_dt_std_name'])
-    torch.save(val_labels,  files_names['val_lb_std_name'])
-
-    torch.save(test_dataset, files_names['test_dt_std_name'])
-    torch.save(test_labels,  files_names['test_lb_std_name'])
+    torch.save(val_dataset,   files_names['val_dt_std_name'])
+    torch.save(test_dataset,  files_names['test_dt_std_name'])
 
 
-def save_std_parameters(
-        standardized_parameters,
-        standardized_parameters_name
+def save_json(
+        file,
+        file_name
 ):
     # Convert torch tensors to numpy arrays
     numpy_dict = {}
-    for key, value in standardized_parameters.items():
+    for key, value in file.items():
         try:
             numpy_dict[key] = value.cpu().numpy().tolist()
         except:
             numpy_dict[key] = value
 
     # Dump the dictionary with numpy arrays to a JSON file
-    with open(standardized_parameters_name, 'w') as json_file:
+    with open(file_name, 'w') as json_file:
         json.dump(numpy_dict, json_file)
 
 
 def load_json(
-        file_name
+        file_name,
+        to=None
 ):
     # Load the data from the JSON file
     with open(file_name, 'r') as json_file:
         file = json.load(json_file)
+
+    if to == 'torch':
+        # Convert torch tensors to torch tensors
+        for key, value in file.items():
+            try:
+                file[key] = torch.tensor(value)
+            except:
+                continue
     return file

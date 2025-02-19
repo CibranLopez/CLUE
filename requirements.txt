@@ -5,3 +5,4 @@ simplejson
 scipy
 pymatgen
 torch_geometric
+scikit-learn
