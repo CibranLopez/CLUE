@@ -200,7 +200,7 @@ def standardize_dataset(
     return dataset_std, labels_std, dataset_parameters
 
 
-def standarize_dataset_from_keys(
+def standardize_dataset_from_keys(
         dataset,
         standardized_parameters
 ):
@@ -217,11 +217,9 @@ def standarize_dataset_from_keys(
     # Read dataset parameters for re-scaling
     edge_mean   = standardized_parameters['edge_mean']
     feat_mean   = standardized_parameters['feat_mean']
-    #target_mean = standardized_parameters['target_mean']
     scale       = standardized_parameters['scale']
     edge_std    = standardized_parameters['edge_std']
     feat_std    = standardized_parameters['feat_std']
-    #target_std  = standardized_parameters['target_std']
 
     # Check if non-linear standardization
     if standardized_parameters['transformation'] == 'inverse-quadratic':
@@ -230,9 +228,6 @@ def standarize_dataset_from_keys(
 
     for data in dataset:
         data.edge_attr = (data.edge_attr - edge_mean) * scale / edge_std
-
-    #for data in dataset:
-    #    data.y = (data.y - target_mean) * scale / target_std
 
     for feat_index in range(dataset[0].num_node_features):
         for data in dataset:
@@ -262,3 +257,92 @@ def check_finite_attributes(
     if not torch.any(torch.isfinite(data.edge_attr)):
         return False
     return True
+
+
+def split_dataset(
+        train_ratio,
+        test_ratio,
+        dataset,
+        labels
+):
+    # Define the sizes of the train, validation and test sets
+    # Corresponds to the size wrt the number of unique materials in the dataset
+    train_size = int(train_ratio * len(dataset))
+    test_size  = int(test_ratio  * len(dataset))
+
+    np.random.shuffle(dataset)
+
+    # Random, fast splitting
+    train_dataset = dataset[:train_size]
+    val_dataset   = dataset[train_size:-test_size]
+    test_dataset  = dataset[-test_size:]
+
+    train_labels = labels[:train_size]
+    val_labels   = labels[train_size:-test_size]
+    test_labels  = labels[-test_size:]
+
+    print(f'Number of training   graphs: {len(train_dataset)}')
+    print(f'Number of validation graphs: {len(val_dataset)}')
+    print(f'Number of testing    graphs: {len(test_dataset)}')
+    return train_dataset, train_labels, val_dataset, val_labels, test_dataset, test_labels
+
+
+def load_datasets(
+        files_names
+):
+    train_dataset = torch.load(files_names['train_dt_std_name'])
+    train_labels = torch.load(files_names['train_lb_std_name'])
+
+    val_dataset = torch.load(files_names['val_dt_std_name'])
+    val_labels = torch.load(files_names['val_lb_std_name'])
+
+    test_dataset = torch.load(files_names['test_dt_std_name'])
+    test_labels = torch.load(files_names['test_lb_std_name'])
+
+    standardized_parameters = load_json(files_names['std_param_name'])
+    return train_dataset, train_labels, val_dataset, val_labels, test_dataset, test_labels, standardized_parameters
+
+
+def save_datasets(
+        train_dataset,
+        train_labels,
+        val_dataset,
+        val_labels,
+        test_dataset,
+        test_labels,
+        files_names
+):
+    torch.save(train_dataset, files_names['train_dt_std_name'])
+    torch.save(train_labels,  files_names['train_lb_std_name'])
+
+    torch.save(val_dataset, files_names['val_dt_std_name'])
+    torch.save(val_labels,  files_names['val_lb_std_name'])
+
+    torch.save(test_dataset, files_names['test_dt_std_name'])
+    torch.save(test_labels,  files_names['test_lb_std_name'])
+
+
+def save_std_parameters(
+        standardized_parameters,
+        standardized_parameters_name
+):
+    # Convert torch tensors to numpy arrays
+    numpy_dict = {}
+    for key, value in standardized_parameters.items():
+        try:
+            numpy_dict[key] = value.cpu().numpy().tolist()
+        except:
+            numpy_dict[key] = value
+
+    # Dump the dictionary with numpy arrays to a JSON file
+    with open(standardized_parameters_name, 'w') as json_file:
+        json.dump(numpy_dict, json_file)
+
+
+def load_json(
+        file_name
+):
+    # Load the data from the JSON file
+    with open(file_name, 'r') as json_file:
+        file = json.load(json_file)
+    return file
