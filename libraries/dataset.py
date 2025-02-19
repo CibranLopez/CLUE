@@ -255,8 +255,7 @@ def check_finite_attributes(
 def split_dataset(
         train_ratio,
         test_ratio,
-        dataset,
-        labels
+        dataset
 ):
     # Define the sizes of the train, validation and test sets
     # Corresponds to the size wrt the number of unique materials in the dataset
