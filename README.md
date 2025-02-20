@@ -1,18 +1,8 @@
 # CLUE: Comparative Latent Uncertainty Estimator
 
-This project introduces a novel framework for generating new crystal materials using equivariant diffusion models based on a graph-like representation of data. This offers a powerful approach to surpass previous implementations, as it considers interactions and similarities between close points (which are more likely to interact). As well, aligned with previous implementations, ours also allows maximizing arbitrary targets such as conductivity, absorption, and more, or looking for materials with specific properties (such as diffraction patterns or n-order transitions). The generated crystals demonstrate remarkable thermodynamic stability (convex-hull approach), compared against the Materials Project database. 
+Doctors often diagnose by comparing patients to similar past cases, focusing on relevant attributes like symptoms or test results. This selective reasoning mirrors how machine learning models use latent spaces to make predictions, emphasizing task-specific features while ignoring irrelevant ones.
 
-The core technology behind this framework is based on deep convolutional layers and graph-like representation of data, where the diffusion process is achieved through the use of Markov chains. The denoising aspect of the model is implemented using convolutional graph neural networks, ensuring high-quality results, with which the noise of graphs is predicted and extracted, allowing the generation of an arbitrary number of novel, independent materials.
-
-This technology is suitable for different applications: from discovering improved ionic conductors beyond current databases to generating molecules for efficient water splitting. Moreover, the model itself can be applied to a variety of problems (concretely, any problem which can be formulated in terms of graphs), such as proposing enhanced distributions in social networks or traffic. Then, although applied to crystal material generation, this repository is divided into two independent functionalities:
-
-The main feature is the generation and interpolation of novel graphs given a reference database of them. However, this architecture can be directly applied to any other problem whose data is graph-like.
-
-An extended discussion on all these topics can be found in our [paper](https://www.overleaf.com/read/cjxhknmhpfpg#d4cb5f).
-
-## Features
-
-This repository shares the new CLUE technologies with comparison against two state-of-the-art approaches.
+We introduce CLUE, a novel uncertainty quantification (UQ) approach leveraging deep learning encodings. Our framework efficiently estimates uncertainty by comparing the latent representation of unseen samples to those in the training set, capturing both chemical and geometric structure as well as environmental constraints. It provides reliable confidence metrics, flagging predictions that arise from extrapolation or lack sufficient similarity to known data.
 
 Please be aware that the code is under active development, bug reports are welcomed in the GitHub issues!
 
@@ -28,7 +18,7 @@ pip3 install -r requirements.txt
 
 ## Execution
 
-A set of user-friendly jupyter notebook have been developed, which can be run locally with pytorch dependencies. It makes predictions on a target dataset and evaluates uncertainty via CLUE, bayesian models and ensembles.
+A set of user-friendly jupyter notebook canm be found on the examples section, which can be run locally. These models train a GCNN and make predictions with uncertainty estimations (recall that CLUE can be used in any already-trained model, even with different technologies from a GNN).
 
 ## Authors
 
