@@ -1,4 +1,6 @@
-import numpy as np
+import matplotlib.pyplot as plt
+import seaborn           as sns
+import numpy             as np
 import torch
 import json
 import os
@@ -10,12 +12,23 @@ from torch_geometric.data import Data
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
+sns.set_theme()
+
 def generate_dataset(
         data_path,
         targets,
         data_folder
 ):
-    
+    """Generates a dataset from the raw data and saves it to disk.
+
+    Args:
+        data_path   (str): Path to the raw data.
+        targets     (list): List of targets to be predicted.
+        data_folder (str): Path to the folder where the dataset will be saved.
+
+    Returns:
+        None
+    """
     # Define basic dataset parameters for tracking data
     dataset_parameters = {
         'input_folder':  data_path,
@@ -262,6 +275,16 @@ def split_dataset(
         test_ratio,
         dataset
 ):
+    """Splits the dataset into training, validation, and testing datasets.
+
+    Args:
+        train_ratio (float): Ratio of the dataset to be used for training.
+        test_ratio  (float): Ratio of the dataset to be used for testing.
+        dataset     (list):  List of graphs in PyTorch Geometric's Data format.
+
+    Returns:
+        Tuple: A tuple containing the training, validation, and testing datasets.
+    """
     # Define the sizes of the train, validation and test sets
     # Corresponds to the size wrt the number of unique materials in the dataset
     train_size = int(train_ratio * len(dataset))
@@ -283,6 +306,14 @@ def split_dataset(
 def load_datasets(
         files_names
 ):
+    """Loads the training, validation, and testing datasets from disk.
+
+    Args:
+        files_names (dict): Dictionary containing the file names for the training, validation, and testing datasets.
+
+    Returns:
+        Tuple: A tuple containing the training, validation, and testing datasets
+    """
     train_dataset = torch.load(files_names['train_dt_std_name'], weights_only=False)
     val_dataset   = torch.load(files_names['val_dt_std_name'],   weights_only=False)
     test_dataset  = torch.load(files_names['test_dt_std_name'],  weights_only=False)
@@ -297,6 +328,14 @@ def save_datasets(
         test_dataset,
         files_names
 ):
+    """Saves the training, validation, and testing datasets to disk.
+
+    Args:
+        train_dataset (list): List of graphs in PyTorch Geometric's Data format.
+
+    Returns:
+        None
+    """
     torch.save(train_dataset, files_names['train_dt_std_name'])
     torch.save(val_dataset,   files_names['val_dt_std_name'])
     torch.save(test_dataset,  files_names['test_dt_std_name'])
@@ -306,6 +345,15 @@ def save_json(
         file,
         file_name
 ):
+    """Saves a dictionary to a JSON file.
+
+    Args:
+        file      (dict): Dictionary containing the data to be saved.
+        file_name (str):  Path to the JSON file.
+
+    Returns:
+        None
+    """
     # Convert torch tensors to numpy arrays
     numpy_dict = {}
     for key, value in file.items():
@@ -323,6 +371,15 @@ def load_json(
         file_name,
         to=None
 ):
+    """Loads a JSON file and converts torch tensors to torch tensors.
+
+    Args:
+        file_name (str): Path to the JSON file.
+        to        (str): Convert torch tensors to torch tensors.
+
+    Returns:
+        dict: Dictionary containing the data from the JSON file.
+    """
     # Load the data from the JSON file
     with open(file_name, 'r') as json_file:
         file = json.load(json_file)
@@ -335,3 +392,78 @@ def load_json(
             except:
                 continue
     return file
+
+
+def parity_plot(
+        train=[None, None],
+        validation=[None, None],
+        test=[None, None],
+        figsize=(3, 3),
+        save_to=None
+):
+    """Plots the computed vs. predicted values for the training, validation, and testing datasets.
+
+    Args:
+        train       (list): List containing the computed and predicted values for the training dataset.
+        validation  (list): List containing the computed and predicted values for the validation dataset.
+        test        (list): List containing the computed and predicted values for the testing dataset.
+        figsize    (tuple): Size of the figure.
+
+    Returns:
+        None
+    """
+    x_train, y_train = train
+    x_val, y_val = validation
+    x_test, y_test = test
+
+    stack = np.concatenate([train, validation, test])
+
+    _min_ = np.min(stack)
+    _max_ = np.max(stack)
+
+    plt.figure(figsize=figsize)
+
+    plt.plot(x_train, y_train, '.', label='Train')
+    plt.plot(x_val, y_val, '.', label='Validation')
+    plt.plot(x_test, y_test, '.', label='Test')
+
+    plt.xlabel('Computed')
+    plt.ylabel('Predicted ')
+    plt.plot([_min_, _max_], [_min_, _max_], '-r')
+    plt.legend(loc='best')
+    if save_to is not None:
+        plt.savefig(save_to, dpi=50, bbox_inches='tight')
+    plt.show()
+
+
+def losses_plot(
+        train_losses,
+        val_losses,
+        to_log=True,
+        figsize=(3, 3),
+        save_to=None
+):
+    """Plots the training and validation losses.
+
+    Args:
+        train_losses (list): List containing the training losses.
+        val_losses   (list): List containing the validation losses.
+        to_log       (bool): If True, the losses are plotted in log scale.
+        figsize      (tuple): Size of the figure.
+
+    Returns:
+        None
+    """
+    if to_log:
+        plt.plot(np.log10(train_losses), label='Train loss')
+        plt.plot(np.log10(val_losses) , label='Val  loss')
+    else:
+        plt.plot(train_losses, label='Train loss')
+        plt.plot(val_losses,   label='Val  loss')
+
+    plt.xlabel('Epoch')
+    plt.ylabel('Loss')
+    plt.legend(loc='best')
+    if save_to is not None:
+        plt.savefig(save_to, dpi=50, bbox_inches='tight')
+    plt.show()

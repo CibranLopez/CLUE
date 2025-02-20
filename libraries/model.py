@@ -183,11 +183,17 @@ def estimate_out_of_distribution(
     return closest_distances.cpu().numpy()
 
 
-class GCNN(torch.nn.Module):
+class GCNN(
+    torch.nn.Module
+):
     """Graph convolution neural network.
     """
     
-    def __init__(self, features_channels, pdropout):
+    def __init__(
+            self,
+            features_channels,
+            pdropout
+    ):
         """Initializes the Graph Convolutional Neural Network.
 
         Args:
@@ -207,23 +213,38 @@ class GCNN(torch.nn.Module):
         self.conv2 = GraphConv(32, 32)
         
         # Define linear layers
-        self.linconv1 = Linear(32, 32)
-        self.linconv2 = Linear(32, 16)
+        self.lin1 = Linear(32, 32)
+        self.lin2 = Linear(32, 16)
         self.lin      = Linear(16, 1)
         
         self.pdropout = pdropout
 
-    def forward(self, x, edge_index, edge_attr, batch, return_graph_embedding=False):
-        ## CONVOLUTION
-        
+    def forward(
+            self,
+            x,
+            edge_index,
+            edge_attr,
+            batch,
+            return_graph_embedding=False
+    ):
+        """Forward pass of the Graph Convolutional Neural Network.
+
+        Args:
+            x                    (torch.Tensor): Node features.
+            edge_index           (torch.Tensor): Edge indices.
+            edge_attr            (torch.Tensor): Edge attributes.
+            batch                (torch.Tensor): Batch indices.
+            return_graph_embedding (bool):        Return graph embeddings.
+
+        Returns:
+            torch.Tensor: Predicted values.
+        """
         # Apply graph convolution with ReLU activation function
         x = self.conv1(x, edge_index, edge_attr)
         x = x.relu()
         x = self.conv2(x, edge_index, edge_attr)
         x = x.relu()
 
-        ## POOLING
-        
         # Apply global mean pooling to reduce dimensionality
         x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]
 
@@ -231,14 +252,12 @@ class GCNN(torch.nn.Module):
         x = F.dropout(x, p=self.pdropout, training=self.training)
         
         # Apply linear convolution with ReLU activation function
-        x = self.linconv1(x)
+        x = self.lin1(x)
         x = x.relu()
-        x = self.linconv2(x)
+        x = self.lin2(x)
         if return_graph_embedding:
             return x
         x = x.relu()
-        
-        ## REGRESSION
         
         # Apply final linear layer to make prediction
         x = self.lin(x)
@@ -410,7 +429,12 @@ def make_predictions(
 
 
 class EarlyStopping():
-    def __init__(self, patience=5, delta=0, model_name='model.pt'):
+    def __init__(
+            self,
+            patience=5,
+            delta=0,
+            model_name='model.pt'
+    ):
         """Initializes the EarlyStopping object. Saves a model if accuracy is improved.
         Declares early_stop = True if training does not improve in patience steps within a delta threshold.
 
@@ -427,7 +451,11 @@ class EarlyStopping():
         self.val_loss_min = np.inf
         self.model_name = model_name
 
-    def __call__(self, val_loss, model):
+    def __call__(
+            self,
+            val_loss,
+            model
+    ):
         """Call method to check and update early stopping.
 
         Args:
@@ -447,7 +475,11 @@ class EarlyStopping():
             self.save_checkpoint(val_loss, model)
             self.counter = 0
 
-    def save_checkpoint(self, val_loss, model):
+    def save_checkpoint(
+            self,
+            val_loss,
+            model
+    ):
         """Save the model checkpoint if the validation loss has decreased.
         It uses model.module, allowing models loaded to nn.DataParallel.
 
@@ -458,4 +490,3 @@ class EarlyStopping():
         if val_loss < self.val_loss_min:
             torch.save(model.module.state_dict(), self.model_name)
             self.val_loss_min = val_loss
-
