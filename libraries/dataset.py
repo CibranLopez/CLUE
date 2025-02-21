@@ -413,13 +413,8 @@ def parity_plot(
         None
     """
     x_train, y_train = train
-    x_val, y_val = validation
-    x_test, y_test = test
-
-    stack = np.concatenate([train, validation, test])
-
-    _min_ = np.min(stack)
-    _max_ = np.max(stack)
+    x_val,   y_val   = validation
+    x_test,  y_test  = test
 
     plt.figure(figsize=figsize)
 
@@ -427,6 +422,7 @@ def parity_plot(
     plt.plot(x_val, y_val, '.', label='Validation')
     plt.plot(x_test, y_test, '.', label='Test')
 
+    _min_, _max_ = get_min_max([train, validation, test])
     plt.xlabel('Computed')
     plt.ylabel('Predicted ')
     plt.plot([_min_, _max_], [_min_, _max_], '-r')
@@ -467,3 +463,19 @@ def losses_plot(
     if save_to is not None:
         plt.savefig(save_to, dpi=50, bbox_inches='tight')
     plt.show()
+
+
+def get_min_max(data):
+    """Determine the minimum and maximum values in a stack of data.
+
+    Args:
+        data: list of torch.tensor
+
+    Returns:
+        _min_: float
+        _max_: float
+    """
+    stack = np.concatenate(data)
+    _min_ = np.min(stack)
+    _max_ = np.max(stack)
+    return _min_, _max_

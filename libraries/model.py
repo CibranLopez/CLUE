@@ -255,9 +255,9 @@ class GCNN(
         x = self.lin1(x)
         x = x.relu()
         x = self.lin2(x)
+        x = x.relu()
         if return_graph_embedding:
             return x
-        x = x.relu()
         
         # Apply final linear layer to make prediction
         x = self.lin(x)
@@ -490,3 +490,30 @@ class EarlyStopping():
         if val_loss < self.val_loss_min:
             torch.save(model.module.state_dict(), self.model_name)
             self.val_loss_min = val_loss
+
+
+def load_model(
+        n_node_features,
+        pdropout=0,
+        device='cpu',
+        model_name=None,
+        purpose='eval'
+):
+    # Load Graph Neural Network model
+    model = GCNN(features_channels=n_node_features, pdropout=pdropout)
+
+    # Moving model to device
+    model = model.to(device)
+
+    if model_name is not None:
+        # Load Graph Neural Network model
+        model.load_state_dict(torch.load(model_name, map_location=torch.device(device)))
+
+    if purpose == 'eval':
+        model.eval()
+    elif purpose == 'train':
+        model.train()
+
+    # Allow data parallelization among multi-GPU
+    model = nn.DataParallel(model)
+    return model
