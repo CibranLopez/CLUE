@@ -195,13 +195,13 @@ def standardize_dataset(
     # Create and save as a dictionary
     dataset_parameters = {
         'transformation': transformation,
-        'target_mean':    target_mean,
-        'feat_mean':      feat_mean,
-        'edge_mean':      edge_mean,
-        'target_std':     target_std,
-        'edge_std':       edge_std,
-        'feat_std':       feat_std,
-        'scale':          scale
+        'target_mean':    np.array(target_mean.cpu().numpy()),
+        'feat_mean':      np.array(feat_mean.cpu().numpy()),
+        'edge_mean':      edge_mean.cpu().numpy(),
+        'target_std':     np.array(target_std.cpu().numpy()),
+        'feat_std':       np.array(feat_std.cpu().numpy()),
+        'edge_std':       edge_std.cpu().numpy(),
+        'scale':          scale.cpu().numpy()
     }
     return dataset_std, dataset_parameters
 
@@ -229,6 +229,12 @@ def standardize_dataset_from_keys(
     feat_std    = standardized_parameters['feat_std']
     target_std  = standardized_parameters['target_std']
 
+    # Number of features per node
+    n_features = dataset[0].num_node_features
+    
+    # Number of features per graph
+    n_y = dataset[0].y.shape[0]
+    
     # Check if non-linear standardization
     if standardized_parameters['transformation'] == 'inverse-quadratic':
         for data in dataset:
@@ -237,10 +243,11 @@ def standardize_dataset_from_keys(
     for data in dataset:
         data.edge_attr = (data.edge_attr - edge_mean) * scale / edge_std
 
-    for data in dataset:
-        data.y = (data.y - target_mean) * scale / target_std
+    for target_index in range(n_y):
+        for data in dataset:
+            data.y[target_index] = (data.y[target_index] - target_mean[target_index]) * scale / target_std[target_index]
 
-    for feat_index in range(dataset[0].num_node_features):
+    for feat_index in range(n_features):
         for data in dataset:
             data.x[:, feat_index] = (data.x[:, feat_index] - feat_mean[feat_index]) * scale / feat_std[feat_index]
     return dataset
@@ -355,21 +362,19 @@ def save_json(
         None
     """
     # Convert torch tensors to numpy arrays
-    numpy_dict = {}
     for key, value in file.items():
         try:
-            numpy_dict[key] = value.cpu().numpy().tolist()
+            file[key] = value.tolist()
         except:
-            numpy_dict[key] = value
+            pass
 
     # Dump the dictionary with numpy arrays to a JSON file
     with open(file_name, 'w') as json_file:
-        json.dump(numpy_dict, json_file)
+        json.dump(file, json_file)
 
 
 def load_json(
-        file_name,
-        to=None
+        file_name
 ):
     """Loads a JSON file and converts torch tensors to torch tensors.
 
@@ -384,20 +389,18 @@ def load_json(
     with open(file_name, 'r') as json_file:
         file = json.load(json_file)
 
-    if to == 'torch':
-        # Convert torch tensors to torch tensors
-        for key, value in file.items():
-            try:
-                file[key] = torch.tensor(value)
-            except:
-                continue
+    for key, value in file.items():
+        try:
+            file[key] = np.array(value, dtype=np.float32)
+        except:
+            pass
     return file
 
 
 def parity_plot(
-        train=[None, None],
-        validation=[None, None],
-        test=[None, None],
+        train=np.array([np.nan, np.nan]),
+        validation=np.array([np.nan, np.nan]),
+        test=np.array([np.nan, np.nan]),
         figsize=(3, 3),
         save_to=None
 ):
@@ -418,11 +421,14 @@ def parity_plot(
 
     plt.figure(figsize=figsize)
 
-    plt.plot(x_train, y_train, '.', label='Train')
-    plt.plot(x_val, y_val, '.', label='Validation')
-    plt.plot(x_test, y_test, '.', label='Test')
+    if np.any(~np.isnan(train)):
+        plt.plot(x_train, y_train, '.', label='Train')
+    if np.any(~np.isnan(validation)):
+        plt.plot(x_val, y_val, '.', label='Validation')
+    if np.any(~np.isnan(test)):
+        plt.plot(x_test, y_test, '.', label='Test')
 
-    _min_, _max_ = get_min_max([train, validation, test])
+    _min_, _max_ = get_min_max(train.flatten(), validation.flatten(), test.flatten())
     plt.xlabel('Computed')
     plt.ylabel('Predicted ')
     plt.plot([_min_, _max_], [_min_, _max_], '-r')
@@ -465,7 +471,7 @@ def losses_plot(
     plt.show()
 
 
-def get_min_max(data):
+def get_min_max(*data):
     """Determine the minimum and maximum values in a stack of data.
 
     Args:
@@ -476,6 +482,6 @@ def get_min_max(data):
         _max_: float
     """
     stack = np.concatenate(data)
-    _min_ = np.min(stack)
-    _max_ = np.max(stack)
+    _min_ = np.nanmin(stack)
+    _max_ = np.nanmax(stack)
     return _min_, _max_

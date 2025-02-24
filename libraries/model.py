@@ -1,8 +1,10 @@
 import numpy               as np
 import torch.nn.functional as F
+import torch.nn            as nn
 import torch
+import os
 
-from scipy.interpolate      import RBFInterpolator
+from scipy.interpolate      import RBFInterpolator, CubicSpline
 from scipy.spatial          import Delaunay
 from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
@@ -53,7 +55,8 @@ def estimate_uncertainty(
     r_embeddings,
     r_labels,
     r_uncertainty_data,
-    t_embeddings
+    t_embeddings,
+    interpolating_method='RBF'
 ):
     """Using a reference dataset, we estimate the uncertainty of the target dataset by interpolation.
 
@@ -68,9 +71,14 @@ def estimate_uncertainty(
     """
     # Extract uncertainty of each reference example
     r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
-    
-    # Create an interpolator
-    interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
+
+    # Call interpolator
+    if interpolating_method == 'RBF':
+        # Radial basis function interpolation in N dimensions
+        interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
+    elif interpolating_method == 'spline':
+        # Create an interpolator
+        interpolator = CubicSpline(r_embeddings, r_uncertainties)
 
     # Look for the uncertainty of the target dataset
     t_uncertainties = interpolator(t_embeddings)
@@ -255,9 +263,9 @@ class GCNN(
         x = self.lin1(x)
         x = x.relu()
         x = self.lin2(x)
-        x = x.relu()
         if return_graph_embedding:
             return x
+        x = x.relu()
         
         # Apply final linear layer to make prediction
         x = self.lin(x)
@@ -285,8 +293,8 @@ def train(
     """
     model.train()
     train_loss = 0
-    all_predictions   = []
-    all_ground_truths = []
+    predictions   = []
+    ground_truths = []
     for data in train_loader:  # Iterate in batches over the training dataset
         # Moving data to device
         data = data.to(device)
@@ -301,8 +309,8 @@ def train(
         train_loss += loss.item()
 
         # Append predictions and ground truths to lists
-        all_predictions.append(out.detach())
-        all_ground_truths.append(data.y.detach())
+        predictions.append(out.detach().cpu().numpy())
+        ground_truths.append(data.y.detach().cpu().numpy())
         
         # Derive gradients
         loss.backward()
@@ -317,9 +325,9 @@ def train(
     avg_train_loss = train_loss / len(train_loader)
     
     # Concatenate predictions and ground truths into single arrays
-    all_predictions   = torch.cat(all_predictions) * target_factor + target_mean
-    all_ground_truths = torch.cat(all_ground_truths) * target_factor + target_mean
-    return avg_train_loss, all_predictions.cpu().numpy(), all_ground_truths.cpu().numpy()
+    predictions   = np.concatenate(predictions)   * target_factor + target_mean
+    ground_truths = np.concatenate(ground_truths) * target_factor + target_mean
+    return avg_train_loss, predictions, ground_truths
 
 
 def test(
@@ -341,8 +349,8 @@ def test(
     """
     model.eval()
     test_loss = 0
-    all_predictions   = []
-    all_ground_truths = []
+    predictions   = []
+    ground_truths = []
     with torch.no_grad():
         for data in test_loader:  # Iterate in batches over the train/test dataset
             # Moving data to device
@@ -358,16 +366,16 @@ def test(
             test_loss += loss.item()
 
             # Append predictions and ground truths to lists
-            all_predictions.append(out.detach())
-            all_ground_truths.append(data.y.detach())
+            predictions.append(out.detach().cpu().numpy())
+            ground_truths.append(data.y.detach().cpu().numpy())
     
     # Compute the average test loss
     avg_test_loss = test_loss / len(test_loader)
     
     # Concatenate predictions and ground truths into single arrays
-    all_predictions   = torch.cat(all_predictions)   * target_factor + target_mean
-    all_ground_truths = torch.cat(all_ground_truths) * target_factor + target_mean
-    return avg_test_loss, all_predictions.cpu().numpy(), all_ground_truths.cpu().numpy()
+    predictions   = np.concatenate(predictions)   * target_factor + target_mean
+    ground_truths = np.concatenate(ground_truths) * target_factor + target_mean
+    return avg_test_loss, predictions, ground_truths
 
 
 def make_predictions(
@@ -391,9 +399,9 @@ def make_predictions(
     model.eval()
     
     # Read dataset parameters for re-scaling
-    target_mean = standardized_parameters['target_mean'].to(device)
-    scale       = standardized_parameters['scale'].to(device)
-    target_std  = standardized_parameters['target_std'].to(device)
+    target_mean = standardized_parameters['target_mean']
+    scale       = standardized_parameters['scale']
+    target_std  = standardized_parameters['target_std']
 
     # Computing the predictions
     dataset = DataLoader(pred_dataset, batch_size=128, shuffle=False, pin_memory=True)
@@ -414,15 +422,12 @@ def make_predictions(
                                                 data.to_data_list(), model, reference_uncertainty_data)
 
             # Append predictions to lists
-            predictions.append(pred)
+            predictions.append(pred.cpu().numpy())
             uncertainties.append(uncer)
             interpolations.append(interp)
 
-    # De-standardize predictions
-    predictions = torch.cat(predictions) * target_std / scale + target_mean
-    
     # Concatenate predictions and ground truths into single arrays
-    predictions    = np.array(predictions.cpu().numpy())
+    predictions    = np.concatenate(predictions) * target_std / scale + target_mean  # De-standardize predictions
     uncertainties  = np.concatenate(uncertainties)
     interpolations = np.concatenate(interpolations)
     return predictions, uncertainties, interpolations
@@ -505,7 +510,7 @@ def load_model(
     # Moving model to device
     model = model.to(device)
 
-    if model_name is not None:
+    if model_name is not None and os.path.exists(model_name):
         # Load Graph Neural Network model
         model.load_state_dict(torch.load(model_name, map_location=torch.device(device)))
 
