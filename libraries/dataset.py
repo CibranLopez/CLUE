@@ -61,25 +61,9 @@ def generate_dataset(
             # Check that the folder is valid
             if os.path.exists(path_to_POSCAR):
                 print(f'\t{polymorph}')
-
-                ratios = np.array(polymorph.split('_'), dtype=float)
-                solid_solution_data = {
-                    'Bi': {
-                        'Bi': ratios[0],
-                        'Sb': 1-ratios[0]
-                    },
-                    'S': {
-                        'S':  ratios[1],
-                        'Se': 1-ratios[1]
-                    },
-                    'I': {
-                        'I':  ratios[2],
-                        'Br': 1-ratios[2]
-                    }
-                }
-
+                
                 try:
-                    nodes, edges, attributes = clg.graph_POSCAR_encoding(f'{path_to_POSCAR}/POSCAR', solid_solution_data=solid_solution_data)
+                    nodes, edges, attributes = clg.graph_POSCAR_encoding(path_to_POSCAR)
                 except:
                     print(f'\tError: {material} {polymorph} not loaded')
                     continue
@@ -104,23 +88,6 @@ def generate_dataset(
 
     
     torch.save(dataset, f'{data_folder}/dataset.pt')
-    
-    # Standardize dataset
-    dataset_std, dataset_parameters = standardize_dataset(dataset, transformation='inverse-quadratic')
-
-    torch.save(dataset_std, f'{data_folder}/standardized_dataset.pt')
-    
-    # Convert torch tensors to numpy arrays
-    numpy_dict = {}
-    for key, value in dataset_parameters.items():
-        try:
-            numpy_dict[key] = value.cpu().numpy().tolist()
-        except:
-            numpy_dict[key] = value
-    
-    # Dump the dictionary with numpy arrays to a JSON file
-    with open(f'{data_folder}/standardized_parameters.json', 'w') as json_file:
-        json.dump(numpy_dict, json_file)
 
 
 def standardize_dataset(

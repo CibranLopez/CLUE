@@ -131,15 +131,17 @@ def is_interpolating(
     Returns:
         numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
     """
-    pca = PCA(n_components=n_components)
-    r_embeddings_reduced = pca.fit_transform(r_embeddings)
-    t_embeddings_reduced = pca.transform(t_embeddings)
+    #pca = PCA(n_components=n_components)
+    #r_embeddings_reduced = pca.fit_transform(r_embeddings)
+    #t_embeddings_reduced = pca.transform(t_embeddings)
 
     # Generate convex hull with reduced data (using Delaunay approach)
-    hull = Delaunay(r_embeddings_reduced)
+    #hull = Delaunay(r_embeddings_reduced)
+    hull = Delaunay(r_embeddings)
 
     # Check if the points are inside the convex hull
-    simplex_indices = hull.find_simplex(t_embeddings_reduced)
+    #simplex_indices = hull.find_simplex(t_embeddings_reduced)
+    simplex_indices = hull.find_simplex(t_embeddings)
 
     # Convert to boolean: True for interpolation, False for extrapolation
     are_interpolated = simplex_indices != -1

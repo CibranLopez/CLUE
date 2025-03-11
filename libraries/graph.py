@@ -2,6 +2,8 @@ import numpy as np
 import torch
 import itertools
 import sys
+import os
+import json
 
 from pymatgen.core.structure import Structure
 
@@ -159,8 +161,7 @@ def get_sphere_images_tessellation(
 
 def graph_POSCAR_encoding(
         path_to_structure,
-        distance_threshold=6,
-        solid_solution_data=None
+        distance_threshold=6
 ):
     """Generates a graph parameters from a POSCAR.
 
@@ -174,7 +175,7 @@ def graph_POSCAR_encoding(
     """
 
     # Load pymatgen structure object
-    structure = Structure.from_file(path_to_structure)
+    structure = Structure.from_file(f'{path_to_structure}/POSCAR')
     
     # Loading dictionary of atomic masses
     atomic_data = {}
@@ -188,6 +189,12 @@ def graph_POSCAR_encoding(
                 'ionization_energy': float(ionization_energy) if ionization_energy != 'None' else None
             }
 
+    solid_solution_data = None
+    if os.path.exists(f'{path_to_structure}/solid-solution.json'):
+        # Load the JSON file
+        with open(f'{path_to_structure}/solid-solution.json', 'r') as json_file:
+            solid_solution_data = json.load(json_file)
+    
     # Get edges and attributes for the corresponding tessellation
     nodes, edges, attributes = get_sphere_images_tessellation(atomic_data,
                                                               structure,
