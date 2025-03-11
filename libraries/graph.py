@@ -11,7 +11,8 @@ device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 def get_sphere_images_tessellation(
         atomic_data,
         structure,
-        distance_threshold=6
+        distance_threshold=6,
+        solid_solution_data=None
 ):
     """Gets the distances by pairs of particles, considering images with periodic boundary conditions (PBC).
 
@@ -50,11 +51,26 @@ def get_sphere_images_tessellation(
         # Name of the current species
         species_name = composition[particle_type]
 
+        if solid_solution_data is None:
+            atomic_mass       = atomic_data[species_name]['atomic_mass']
+            charge            = atomic_data[species_name]['charge']
+            electronegativity = atomic_data[species_name]['electronegativity']
+            ionization_energy = atomic_data[species_name]['ionization_energy']
+        else:
+            atomic_mass       = sum(solid_solution_data[species_name][ss_name] * atomic_data[ss_name]['atomic_mass']
+                                    for ss_name in solid_solution_data[species_name].keys())
+            charge            = sum(solid_solution_data[species_name][ss_name] * atomic_data[ss_name]['charge']
+                                    for ss_name in solid_solution_data[species_name].keys())
+            electronegativity = sum(solid_solution_data[species_name][ss_name] * atomic_data[ss_name]['electronegativity']
+                                    for ss_name in solid_solution_data[species_name].keys())
+            ionization_energy = sum(solid_solution_data[species_name][ss_name] * atomic_data[ss_name]['ionization_energy']
+                                    for ss_name in solid_solution_data[species_name].keys())
+        
         # Adding the nodes (mass, charge, electronegativity and ionization energies)
-        nodes.append([atomic_data[species_name]['atomic_mass'],
-                      atomic_data[species_name]['charge'],
-                      atomic_data[species_name]['electronegativity'],
-                      atomic_data[species_name]['ionization_energy']])
+        nodes.append([atomic_mass,
+                      charge,
+                      electronegativity,
+                      ionization_energy])    
 
         # Get the initial position
         position_0 = positions[index_0]
@@ -143,7 +159,8 @@ def get_sphere_images_tessellation(
 
 def graph_POSCAR_encoding(
         path_to_structure,
-        distance_threshold=6
+        distance_threshold=6,
+        solid_solution_data=None
 ):
     """Generates a graph parameters from a POSCAR.
 
@@ -174,7 +191,8 @@ def graph_POSCAR_encoding(
     # Get edges and attributes for the corresponding tessellation
     nodes, edges, attributes = get_sphere_images_tessellation(atomic_data,
                                                               structure,
-                                                              distance_threshold=distance_threshold)
+                                                              distance_threshold=distance_threshold,
+                                                              solid_solution_data=solid_solution_data)
 
     # Convert to torch tensors and return
     nodes      = torch.tensor(nodes,      dtype=torch.float)

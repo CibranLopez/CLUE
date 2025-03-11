@@ -61,9 +61,25 @@ def generate_dataset(
             # Check that the folder is valid
             if os.path.exists(path_to_POSCAR):
                 print(f'\t{polymorph}')
-                
+
+                ratios = np.array(polymorph.split('_'), dtype=float)
+                solid_solution_data = {
+                    'Bi': {
+                        'Bi': ratios[0],
+                        'Sb': 1-ratios[0]
+                    },
+                    'S': {
+                        'S':  ratios[1],
+                        'Se': 1-ratios[1]
+                    },
+                    'I': {
+                        'I':  ratios[2],
+                        'Br': 1-ratios[2]
+                    }
+                }
+
                 try:
-                    nodes, edges, attributes = clg.graph_POSCAR_encoding(f'{path_to_POSCAR}/POSCAR')
+                    nodes, edges, attributes = clg.graph_POSCAR_encoding(f'{path_to_POSCAR}/POSCAR', solid_solution_data=solid_solution_data)
                 except:
                     print(f'\tError: {material} {polymorph} not loaded')
                     continue
@@ -90,10 +106,9 @@ def generate_dataset(
     torch.save(dataset, f'{data_folder}/dataset.pt')
     
     # Standardize dataset
-    dataset_std, labels_std, dataset_parameters = standardize_dataset(dataset, transformation='inverse-quadratic')
+    dataset_std, dataset_parameters = standardize_dataset(dataset, transformation='inverse-quadratic')
 
     torch.save(dataset_std, f'{data_folder}/standardized_dataset.pt')
-    torch.save(labels_std,  f'{data_folder}/standardized_labels.pt')
     
     # Convert torch tensors to numpy arrays
     numpy_dict = {}
