@@ -40,6 +40,9 @@ def analyze_uncertainty(
     # Create a DataLoader for the target dataset
     t_embeddings = extract_embeddings(t_dataset, model)
 
+    r_embeddings[r_embeddings<0] *= 1e-8
+    t_embeddings[t_embeddings<0] *= 1e-8
+
     # Extract labels from r_dataset
     r_labels = [data.label for data in r_dataset]
 
@@ -118,7 +121,7 @@ def extract_embeddings(
 def is_interpolating(
     r_embeddings,
     t_embeddings,
-    n_components=5
+    n_components=4
 ):
     """Check if the target embeddings are in the interpolation regime.
 
