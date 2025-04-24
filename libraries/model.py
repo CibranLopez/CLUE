@@ -40,17 +40,22 @@ def analyze_uncertainty(
     # Create a DataLoader for the target dataset
     t_embeddings = extract_embeddings(t_dataset, model)
 
+    # It fails with illdefined spaces, thus with ReLU activation function as well
     r_embeddings[r_embeddings<0] *= 1e-8
     t_embeddings[t_embeddings<0] *= 1e-8
 
     # Extract labels from r_dataset
     r_labels = [data.label for data in r_dataset]
 
-    # Determine the uncertainty on the predictions
-    t_uncertainties = estimate_uncertainty(r_embeddings, r_labels, r_uncertainty_data, t_embeddings)
-
     # Determine which points are in the interpolation/extrapolation regime
     t_interpolations = is_interpolating(r_embeddings, t_embeddings)
+
+    # Determine the uncertainty on the predictions
+    t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
+                                           r_uncertainty_data,
+                                           t_embeddings,
+                                           t_interpolations)
+
     return t_uncertainties, t_interpolations
 
 
@@ -59,32 +64,52 @@ def estimate_uncertainty(
     r_labels,
     r_uncertainty_data,
     t_embeddings,
+    t_interpolations,
     interpolating_method='RBF'
 ):
-    """Using a reference dataset, we estimate the uncertainty of the target dataset by interpolation.
+    """Estimate the uncertainty of the target dataset by interpolation.
+
+    Sets the uncertainty of extrapolated points to the maximum uncertainty between the expected one and that
+    of the closest point in the reference dataset. Uncertainties for interpolated points remain unchanged.
 
     Args:
-        r_embeddings (numpy.ndarray): Reference embeddings.
-        r_labels     (list):           Reference labels.
-        r_uncertainty_data (dict):     Uncertainty data for the reference dataset.
-        t_embeddings (numpy.ndarray): Target embeddings.
+        r_embeddings         (numpy.ndarray): Reference embeddings.
+        r_labels             (list):          Reference labels.
+        r_uncertainty_data   (dict):          Uncertainty data for the reference dataset.
+        t_embeddings         (numpy.ndarray): Target embeddings.
+        t_interpolations     (numpy.ndarray): Boolean array indicating if the target embeddings are interpolated.
+        interpolating_method (str):           Interpolation method ('RBF' or 'spline').
 
     Returns:
         numpy.ndarray: Uncertainties of the target dataset.
     """
-    # Extract uncertainty of each reference example
-    r_uncertainties = [r_uncertainty_data[label] for label in r_labels]
+    # Extract uncertainties for each reference example
+    r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
 
-    # Call interpolator
+    # Select interpolation method
     if interpolating_method == 'RBF':
-        # Radial basis function interpolation in N dimensions
         interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
     elif interpolating_method == 'spline':
-        # Create an interpolator
         interpolator = CubicSpline(r_embeddings, r_uncertainties)
+    else:
+        raise ValueError(f"Unsupported interpolation method: {interpolating_method}")
 
-    # Look for the uncertainty of the target dataset
+    # Interpolate uncertainties for the target dataset
     t_uncertainties = interpolator(t_embeddings)
+
+    # Compute pairwise distances between target and reference embeddings
+    distances = np.linalg.norm(t_embeddings[:, None, :] - r_embeddings[None, :, :], axis=2)
+
+    # Find the closest reference point for each target embedding
+    closest_indices = np.argmin(distances, axis=1)
+
+    # Update uncertainties for extrapolated points
+    extrapolated_mask = ~t_interpolations
+    t_uncertainties[extrapolated_mask] = np.maximum(
+        t_uncertainties[extrapolated_mask],
+        r_uncertainties[closest_indices[extrapolated_mask]]
+    )
+
     return t_uncertainties
 
 
@@ -128,8 +153,7 @@ def is_interpolating(
     Args:
         r_embeddings (numpy.ndarray): Reference embeddings.
         t_embeddings (numpy.ndarray): Target embeddings.
-        tolerance    (float):          Tolerance threshold for interpolation.
-        n_components (int):            Number of components for PCA.
+        n_components (int):           Number of components for PCA.
 
     Returns:
         numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
