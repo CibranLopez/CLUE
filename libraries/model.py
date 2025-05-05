@@ -456,8 +456,8 @@ def make_predictions(
             interpolations.append(interp)
 
     # Concatenate predictions and ground truths into single arrays
-    predictions    = np.concatenate(predictions) * target_std / scale + target_mean  # De-standardize predictions
-    uncertainties  = np.concatenate(uncertainties)
+    predictions    = np.concatenate(predictions)   * target_std / scale + target_mean  # De-standardize predictions
+    uncertainties  = np.concatenate(uncertainties) * target_std / scale + target_mean  # De-standardize predictions
     interpolations = np.concatenate(interpolations)
     return predictions, uncertainties, interpolations
 
