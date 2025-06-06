@@ -41,8 +41,8 @@ def analyze_uncertainty(
     t_embeddings = extract_embeddings(t_dataset, model)
 
     # It fails with illdefined spaces, thus with ReLU activation function as well
-    #r_embeddings[r_embeddings<0] *= 1e-8
-    #t_embeddings[t_embeddings<0] *= 1e-8
+    r_embeddings[r_embeddings<0] *= 1e-8
+    t_embeddings[t_embeddings<0] *= 1e-8
 
     # Extract labels from r_dataset
     r_labels = [data.label for data in r_dataset]
@@ -98,17 +98,17 @@ def estimate_uncertainty(
     t_uncertainties = interpolator(t_embeddings)
 
     # Compute pairwise distances between target and reference embeddings
-    distances = np.linalg.norm(t_embeddings[:, None, :] - r_embeddings[None, :, :], axis=2)
+    #distances = np.linalg.norm(t_embeddings[:, None, :] - r_embeddings[None, :, :], axis=2)
 
     # Find the closest reference point for each target embedding
-    closest_indices = np.argmin(distances, axis=1)
+    #closest_indices = np.argmin(distances, axis=1)
 
     # Update uncertainties for extrapolated points
-    extrapolated_mask = ~t_interpolations
-    t_uncertainties[extrapolated_mask] = np.maximum(
-        t_uncertainties[extrapolated_mask],
-        r_uncertainties[closest_indices[extrapolated_mask]]
-    )
+    #extrapolated_mask = ~t_interpolations
+    #t_uncertainties[extrapolated_mask] = np.maximum(
+    #    t_uncertainties[extrapolated_mask],
+    #    r_uncertainties[closest_indices[extrapolated_mask]]
+    #)
 
     return t_uncertainties
 
@@ -429,8 +429,10 @@ def make_predictions(
     
     # Read dataset parameters for re-scaling
     target_mean = standardized_parameters['target_mean']
-    scale       = standardized_parameters['scale']
     target_std  = standardized_parameters['target_std']
+    uncert_mean = reference_uncertainty_data['uncert_mean']
+    uncert_std  = reference_uncertainty_data['uncert_std']
+    scale       = standardized_parameters['scale']
 
     # Computing the predictions
     dataset = DataLoader(pred_dataset, batch_size=128, shuffle=False, pin_memory=True)
@@ -448,7 +450,7 @@ def make_predictions(
 
             # Estimate uncertainty
             uncer, interp = analyze_uncertainty(reference_dataset,
-                                                data.to_data_list(), model, reference_uncertainty_data)
+                                                data.to_data_list(), model, reference_uncertainty_data['uncertainty_values'])
 
             # Append predictions to lists
             predictions.append(pred.cpu().numpy())
@@ -457,7 +459,7 @@ def make_predictions(
 
     # Concatenate predictions and ground truths into single arrays
     predictions    = np.concatenate(predictions)   * target_std / scale + target_mean  # De-standardize predictions
-    uncertainties  = np.concatenate(uncertainties) * target_std / scale + target_mean  # De-standardize predictions
+    uncertainties  = np.concatenate(uncertainties) * uncert_std / scale + uncert_mean  # De-standardize predictions
     interpolations = np.concatenate(interpolations)
     return predictions, uncertainties, interpolations
 
