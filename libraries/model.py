@@ -220,6 +220,142 @@ def estimate_out_of_distribution(
     return closest_distances.cpu().numpy()
 
 
+class eGCNN(
+    torch.nn.Module
+):
+    """
+    Combined Graph Convolutional Neural Network for node and edge prediction.
+    Alternately updates node and edge embeddings after each convolutional layer.
+    """
+
+    def __init__(
+            self,
+            features_channels,
+            pdropout
+    ):
+        super(eGCNN, self).__init__()
+
+        torch.manual_seed(12345)
+
+        neurons_n_1 = 32
+        neurons_n_2 = 64
+
+        neurons_e_1 = 32
+        neurons_e_2 = 32
+
+        # Node update layers (GraphConv)
+        self.node_conv1 = GraphConv(features_channels, neurons_n_1)
+        self.node_conv2 = GraphConv(neurons_n_1, neurons_n_2)
+        self.node_conv3 = GraphConv(neurons_n_2, features_channels)
+
+        # Edge update layers (Linear)
+        self.edge_linear_f1 = Linear(2*features_channels+1, neurons_e_1)  # From ini to multi
+        self.edge_linear_r1 = Linear(neurons_e_1, 1)  # From multi to 1
+
+        self.edge_linear_f2 = Linear(2*neurons_n_1+1, neurons_e_2)  # From ini to multi
+        self.edge_linear_r2 = Linear(neurons_e_2, 1)  # From multi to 1
+        
+        # Normalization layers
+        self.node_norm1 = torch.nn.BatchNorm1d(256)
+        self.edge_norm1 = torch.nn.BatchNorm1d(64)
+
+        self.pdropout_node = pdropout
+        self.pdropout_edge = pdropout
+
+    def forward(
+            self,
+            batch
+    ):
+        """
+        Perform forward propagation alternately updating nodes and edges.
+
+        Args:
+            batch: A batch object containing x, edge_index, and edge_attr.
+            graph_features: Graph-level features tensor.
+
+        Returns:
+            Updated batch object with updated x and edge_attr.
+        """
+
+        # Update 1
+        x         = self.node_forward(batch, self.node_conv1)
+        edge_attr = self.edge_forward(batch, self.edge_linear_f1, self.edge_linear_r1)
+        batch.x, batch.edge_attr = x, edge_attr
+
+        # Update 2
+        x         = self.node_forward(batch, self.node_conv2)
+        edge_attr = self.edge_forward(batch, self.edge_linear_f2, self.edge_linear_r2)
+        batch.x, batch.edge_attr = x, edge_attr
+
+        # Update 3
+        x = self.node_forward(batch, self.node_conv3)
+        return x
+
+    def node_forward(
+            self,
+            batch,
+            node_conv,
+            return_graph_embedding=False
+    ):
+        """
+        Update node embeddings using the current node features and edge attributes.
+
+        Args:
+            batch: Batch object containing x, edge_index, and edge_attr.
+            node_conv: Graph convolutional layer.
+
+        Returns:
+            Updated node embeddings.
+        """
+        # Read properties from the batch object
+        x, edge_index, edge_attr = batch.x, batch.edge_index, batch.edge_attr
+
+        x = node_conv(x, edge_index, edge_attr)
+        if return_graph_embedding:
+            return x
+        x = x.relu()
+        return x
+
+    def edge_forward(
+            self,
+            batch,
+            edge_linear_forward,
+            edge_linear_reverse
+    ):
+        """
+        Update edge attributes using the current node features and edge attributes.
+
+        Args:
+            batch: Batch object containing x, edge_index, and edge_attr.
+            edge_linear: Linear layer for edge attribute prediction in multi-dimensional space.
+            edge_linear_reverse: Move back to 1-dimensional edge attributes.
+
+        Returns:
+            Updated edge attributes.
+        """
+        # Read properties from the batch object
+        x, edge_index, edge_attr = batch.x, batch.edge_index, batch.edge_attr
+
+        # Define x_i and x_j as features of every corresponding pair of nodes (same order than attributes)
+        x_i = x[edge_index[0]]
+        x_j = x[edge_index[1]]
+
+        # Reshape previous_attr tensor to have the same number of dimensions as x
+        previous_attr = edge_attr.view(-1, 1)  # Reshapes from [...] to [..., 1]
+
+        # Calculate squared distance between node features
+        edge_attr = torch.cat((x_i, x_j), dim=1)
+        
+        # Concatenate the tensors along dimension 1 to get a tensor of size [..., num_embeddings ~ 6]
+        edge_attr = torch.cat((edge_attr, previous_attr), dim=1)
+
+        # Apply linear convolution with ReLU activation function
+        edge_attr = edge_linear_forward(edge_attr)
+        edge_attr = edge_attr.relu()
+        edge_attr = edge_linear_reverse(edge_attr).ravel()
+        return edge_attr
+
+
 class GCNN(
     torch.nn.Module
 ):
@@ -429,8 +565,10 @@ def make_predictions(
     
     # Read dataset parameters for re-scaling
     target_mean = standardized_parameters['target_mean']
-    scale       = standardized_parameters['scale']
     target_std  = standardized_parameters['target_std']
+    uncert_mean = reference_uncertainty_data['uncert_mean']
+    uncert_std  = reference_uncertainty_data['uncert_std']
+    scale       = standardized_parameters['scale']
 
     # Computing the predictions
     dataset = DataLoader(pred_dataset, batch_size=128, shuffle=False, pin_memory=True)
@@ -448,7 +586,7 @@ def make_predictions(
 
             # Estimate uncertainty
             uncer, interp = analyze_uncertainty(reference_dataset,
-                                                data.to_data_list(), model, reference_uncertainty_data)
+                                                data.to_data_list(), model, reference_uncertainty_data['uncertainty_values'])
 
             # Append predictions to lists
             predictions.append(pred.cpu().numpy())
@@ -457,7 +595,7 @@ def make_predictions(
 
     # Concatenate predictions and ground truths into single arrays
     predictions    = np.concatenate(predictions)   * target_std / scale + target_mean  # De-standardize predictions
-    uncertainties  = np.concatenate(uncertainties) * target_std / scale + target_mean  # De-standardize predictions
+    uncertainties  = np.concatenate(uncertainties) * uncert_std / scale + uncert_mean  # De-standardize predictions
     interpolations = np.concatenate(interpolations)
     return predictions, uncertainties, interpolations
 
@@ -534,7 +672,7 @@ def load_model(
         purpose='eval'
 ):
     # Load Graph Neural Network model
-    model = GCNN(features_channels=n_node_features, pdropout=pdropout)
+    model = eGCNN(features_channels=n_node_features, pdropout=pdropout)
 
     # Moving model to device
     model = model.to(device)
