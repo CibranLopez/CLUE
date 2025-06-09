@@ -303,11 +303,11 @@ def load_datasets(
     Returns:
         Tuple: A tuple containing the training, validation, and testing datasets
     """
-    train_dataset = torch.load(files_names['train_dt_std_name'], weights_only=False)
-    val_dataset   = torch.load(files_names['val_dt_std_name'],   weights_only=False)
-    test_dataset  = torch.load(files_names['test_dt_std_name'],  weights_only=False)
+    train_dataset = torch.load(files_names['train_dataset_std'], weights_only=False)
+    val_dataset   = torch.load(files_names['val_dataset_std'],   weights_only=False)
+    test_dataset  = torch.load(files_names['test_dataset_std'],  weights_only=False)
 
-    standardized_parameters = load_json(files_names['std_param_name'])
+    standardized_parameters = load_json(files_names['std_parameters'])
     return train_dataset, val_dataset, test_dataset, standardized_parameters
 
 
@@ -325,9 +325,9 @@ def save_datasets(
     Returns:
         None
     """
-    torch.save(train_dataset, files_names['train_dt_std_name'])
-    torch.save(val_dataset,   files_names['val_dt_std_name'])
-    torch.save(test_dataset,  files_names['test_dt_std_name'])
+    torch.save(train_dataset, files_names['train_dataset_std'])
+    torch.save(val_dataset,   files_names['val_dataset_std'])
+    torch.save(test_dataset,  files_names['test_dataset_std'])
 
 
 def save_json(

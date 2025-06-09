@@ -675,7 +675,7 @@ def load_model(
         mode='eval'
 ):
     # Load Graph Neural Network model
-    model = eGCNN(features_channels=n_node_features, pdropout=pdropout)
+    model = GCNN(features_channels=n_node_features, pdropout=pdropout)
 
     # Moving model to device
     model = model.to(device)
