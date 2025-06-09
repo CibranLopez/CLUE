@@ -543,7 +543,7 @@ def test(
     return avg_test_loss, predictions, ground_truths
 
 
-def make_predictions(
+def forward_predictions(
         reference_dataset,
         pred_dataset,
         model,
@@ -564,11 +564,14 @@ def make_predictions(
     model.eval()
     
     # Read dataset parameters for re-scaling
-    target_mean = standardized_parameters['target_mean']
-    target_std  = standardized_parameters['target_std']
-    uncert_mean = reference_uncertainty_data['uncert_mean']
-    uncert_std  = reference_uncertainty_data['uncert_std']
-    scale       = standardized_parameters['scale']
+    target_mean  = standardized_parameters['target_mean']
+    target_std   = standardized_parameters['target_std']
+    target_scale = standardized_parameters['scale']
+
+    # Read uncertainty parameters for re-scaling
+    uncert_mean  = reference_uncertainty_data['uncert_mean']
+    uncert_std   = reference_uncertainty_data['uncert_std']
+    uncert_scale = reference_uncertainty_data['scale']
 
     # Computing the predictions
     dataset = DataLoader(pred_dataset, batch_size=128, shuffle=False, pin_memory=True)
@@ -582,20 +585,20 @@ def make_predictions(
             data = data.to(device)
 
             # Perform a single forward pass
-            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten().detach()
+            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten().detach().cpu().numpy()
 
             # Estimate uncertainty
-            uncer, interp = analyze_uncertainty(reference_dataset,
-                                                data.to_data_list(), model, reference_uncertainty_data['uncertainty_values'])
+            uncert, interp = analyze_uncertainty(reference_dataset,
+                                                 data.to_data_list(), model, reference_uncertainty_data['uncertainty_values'])
 
             # Append predictions to lists
-            predictions.append(pred.cpu().numpy())
-            uncertainties.append(uncer)
+            predictions.append(pred)
+            uncertainties.append(uncert)
             interpolations.append(interp)
 
     # Concatenate predictions and ground truths into single arrays
-    predictions    = np.concatenate(predictions)   * target_std / scale + target_mean  # De-standardize predictions
-    uncertainties  = np.concatenate(uncertainties) * uncert_std / scale + uncert_mean  # De-standardize predictions
+    predictions    = np.concatenate(predictions)   * target_std / target_scale + target_mean  # De-standardize predictions
+    uncertainties  = np.concatenate(uncertainties) * uncert_std / uncert_scale + uncert_mean  # De-standardize predictions
     interpolations = np.concatenate(interpolations)
     return predictions, uncertainties, interpolations
 
@@ -669,7 +672,7 @@ def load_model(
         pdropout=0,
         device='cpu',
         model_name=None,
-        purpose='eval'
+        mode='eval'
 ):
     # Load Graph Neural Network model
     model = eGCNN(features_channels=n_node_features, pdropout=pdropout)
@@ -681,9 +684,9 @@ def load_model(
         # Load Graph Neural Network model
         model.load_state_dict(torch.load(model_name, map_location=torch.device(device)))
 
-    if purpose == 'eval':
+    if mode == 'eval':
         model.eval()
-    elif purpose == 'train':
+    elif mode == 'train':
         model.train()
 
     # Allow data parallelization among multi-GPU
