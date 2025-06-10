@@ -571,7 +571,7 @@ def forward_predictions(
     # Read uncertainty parameters for re-scaling
     uncert_mean  = reference_uncertainty_data['uncert_mean']
     uncert_std   = reference_uncertainty_data['uncert_std']
-    uncert_scale = reference_uncertainty_data['scale']
+    uncert_scale = reference_uncertainty_data['uncert_scale']
 
     # Computing the predictions
     dataset = DataLoader(pred_dataset, batch_size=128, shuffle=False, pin_memory=True)
