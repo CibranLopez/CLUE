@@ -146,7 +146,7 @@ def extract_embeddings(
 def is_interpolating(
     r_embeddings,
     t_embeddings,
-    n_components=4
+    n_components=None
 ):
     """Check if the target embeddings are in the interpolation regime.
 
@@ -158,6 +158,7 @@ def is_interpolating(
     Returns:
         numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
     """
+    n_components = n_components if n_components is not None else len(r_embeddings[0])
     pca = PCA(n_components=n_components)
     r_embeddings_reduced = pca.fit_transform(r_embeddings)
     t_embeddings_reduced = pca.transform(t_embeddings)
