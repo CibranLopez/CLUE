@@ -24,10 +24,10 @@ def analyze_uncertainty(
     """Estimate uncertainty on predictions and whether the target dataset is in the interpolation regime.
 
     Args:
-        r_dataset (list):            Reference dataset, as a list of graphs in PyTorch Geometric's Data format.
-        t_dataset (list):            Target dataset, as a list of graphs in PyTorch Geometric's Data format.
-        model     (torch.nn.Module): The trained model.
-        r_uncertainty_data (dict):   Uncertainty data for the reference dataset.
+        r_dataset          (list):            Reference dataset, as a list of graphs in PyTorch Geometric's Data format.
+        t_dataset          (list):            Target dataset, as a list of graphs in PyTorch Geometric's Data format.
+        model              (torch.nn.Module): The trained model.
+        r_uncertainty_data (dict):            Uncertainty data for the reference dataset.
 
     Returns:
         numpy.ndarray: Uncertainties of the target dataset.
@@ -148,28 +148,27 @@ def is_interpolating(
     t_embeddings,
     n_components=None
 ):
-    """Check if the target embeddings are in the interpolation regime.
+    """Check if the target embeddings are in the interpolation regime. If n_components is not None,
+    it reduces dimensionality of embeddings to n_components dimensions.
 
     Args:
         r_embeddings (numpy.ndarray): Reference embeddings.
         t_embeddings (numpy.ndarray): Target embeddings.
-        n_components (int):           Number of components for PCA.
+        n_components (int, None):     Number of components for PCA. If None, PCA is not performed.
 
     Returns:
         numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
     """
-    n_components = n_components if n_components is not None else len(r_embeddings[0])
-    pca = PCA(n_components=n_components)
-    r_embeddings_reduced = pca.fit_transform(r_embeddings)
-    t_embeddings_reduced = pca.transform(t_embeddings)
+    if n_components is not None:
+        pca = PCA(n_components=n_components)
+        r_embeddings = pca.fit_transform(r_embeddings)
+        t_embeddings = pca.transform(t_embeddings)
 
     # Generate convex hull with reduced data (using Delaunay approach)
-    hull = Delaunay(r_embeddings_reduced)
-    #hull = Delaunay(r_embeddings)
+    hull = Delaunay(r_embeddings)
 
     # Check if the points are inside the convex hull
-    simplex_indices = hull.find_simplex(t_embeddings_reduced)
-    #simplex_indices = hull.find_simplex(t_embeddings)
+    simplex_indices = hull.find_simplex(t_embeddings)
 
     # Convert to boolean: True for interpolation, False for extrapolation
     are_interpolated = simplex_indices != -1
