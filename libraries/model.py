@@ -41,8 +41,8 @@ def analyze_uncertainty(
     t_embeddings = extract_embeddings(t_dataset, model)
 
     # It fails with illdefined spaces, thus with ReLU activation function as well
-    r_embeddings[r_embeddings<0] *= 1e-8
-    t_embeddings[t_embeddings<0] *= 1e-8
+    #r_embeddings[r_embeddings<0] *= 1e-8
+    #t_embeddings[t_embeddings<0] *= 1e-8
 
     # Extract labels from r_dataset
     r_labels = [data.label for data in r_dataset]
@@ -386,9 +386,9 @@ class GCNN(
         self.conv2 = GraphConv(32, 32)
         
         # Define linear layers
-        self.lin1 = Linear(32, 32)
-        self.lin2 = Linear(32, 16)
-        self.lin      = Linear(16, 1)
+        self.lin1 = Linear(32, 16)
+        self.lin2 = Linear(16, 8)
+        self.lin  = Linear(8, 1)
         
         self.pdropout = pdropout
 
