@@ -239,34 +239,23 @@ class eGCNN(
 
         neurons_n_1 = 32
         neurons_n_2 = 64
-        neurons_n_3 = 32
 
-        neurons_e_1 = 32
-        neurons_e_2 = 32
+        neurons_e_1 = 64
 
         # Node update layers (GraphConv)
         self.node_conv1 = GraphConv(features_channels, neurons_n_1)
         self.node_conv2 = GraphConv(neurons_n_1, neurons_n_2)
-        self.node_conv3 = GraphConv(neurons_n_2, neurons_n_3)
 
         # Edge update layers (Linear)
         self.edge_linear_f1 = Linear(2*features_channels+1, neurons_e_1)  # From ini to multi
         self.edge_linear_r1 = Linear(neurons_e_1, 1)  # From multi to 1
-
-        self.edge_linear_f2 = Linear(2*neurons_n_1+1, neurons_e_2)  # From ini to multi
-        self.edge_linear_r2 = Linear(neurons_e_2, 1)  # From multi to 1
         
-        # Normalization layers
-        self.node_norm1 = torch.nn.BatchNorm1d(256)
-        self.edge_norm1 = torch.nn.BatchNorm1d(64)
-
         # Define graph convolution layers
-        self.conv1 = GraphConv(neurons_n_3, 32)
+        self.conv1 = GraphConv(neurons_n_2, 32)
         self.conv2 = GraphConv(32, 32)
         
         # Define linear layers
-        self.lin1 = Linear(32, 16)
-        self.lin2 = Linear(16, 6)
+        self.lin1 = Linear(32, 6)
         self.lin  = Linear(6, 1)
         
         self.pdropout = pdropout
@@ -297,22 +286,15 @@ class eGCNN(
 
         # Update 2
         x         = self.node_forward(batch, self.node_conv2)
-        edge_attr = self.edge_forward(batch, self.edge_linear_f2, self.edge_linear_r2)
-        batch.x, batch.edge_attr = x, edge_attr
-
-        # Update 3
-        x = self.node_forward(batch, self.node_conv3)
 
         # Apply global mean pooling to reduce dimensionality
-        x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]
+        x = global_mean_pool(x, batch.batch)  # [batch_size, hidden_channels]
 
         # Apply dropout regularization
         x = F.dropout(x, p=self.pdropout, training=self.training)
         
         # Apply linear convolution with ReLU activation function
         x = self.lin1(x)
-        x = x.relu()
-        x = self.lin2(x)
         if return_graph_embedding:
             return x
         x = x.relu()
@@ -336,10 +318,7 @@ class eGCNN(
         Returns:
             Updated node embeddings.
         """
-        # Read properties from the batch object
-        x, edge_index, edge_attr = batch.x, batch.edge_index, batch.edge_attr
-
-        x = node_conv(x, edge_index, edge_attr)
+        x = node_conv(batch.x, batch.edge_index, batch.edge_attr)
         x = x.relu()
         return x
 
@@ -360,15 +339,12 @@ class eGCNN(
         Returns:
             Updated edge attributes.
         """
-        # Read properties from the batch object
-        x, edge_index, edge_attr = batch.x, batch.edge_index, batch.edge_attr
-
         # Define x_i and x_j as features of every corresponding pair of nodes (same order than attributes)
-        x_i = x[edge_index[0]]
-        x_j = x[edge_index[1]]
+        x_i = batch.x[batch.edge_index[0]]
+        x_j = batch.x[batch.edge_index[1]]
 
         # Reshape previous_attr tensor to have the same number of dimensions as x
-        previous_attr = edge_attr.view(-1, 1)  # Reshapes from [...] to [..., 1]
+        previous_attr = batch.edge_attr.view(-1, 1)  # Reshapes from [...] to [..., 1]
 
         # Calculate squared distance between node features
         edge_attr = torch.cat((x_i, x_j), dim=1)
@@ -421,9 +397,6 @@ class GCNN(
 
     def forward(
             self,
-            x,
-            edge_index,
-            edge_attr,
             batch,
             return_graph_embedding=False
     ):
@@ -446,7 +419,7 @@ class GCNN(
         x = x.relu()
 
         # Apply global mean pooling to reduce dimensionality
-        x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]
+        x = global_mean_pool(x, batch.batch)  # [batch_size, hidden_channels]
 
         # Apply dropout regularization
         x = F.dropout(x, p=self.pdropout, training=self.training)
@@ -492,7 +465,7 @@ def train(
         data = data.to(device)
         
         # Perform a single forward pass
-        out = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
+        out = model(data).flatten()
         
         # Compute the loss
         loss = criterion(out, data.y)
@@ -549,7 +522,7 @@ def test(
             data = data.to(device)
             
             # Perform a single forward pass
-            out = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten()
+            out = model(data).flatten()
             
             # Compute the loss
             loss = criterion(out, data.y)
@@ -612,7 +585,7 @@ def forward_predictions(
             data = data.to(device)
 
             # Perform a single forward pass
-            pred = model(data.x, data.edge_index, data.edge_attr, data.batch).flatten().detach().cpu().numpy()
+            pred = model(data).flatten().detach().cpu().numpy()
 
             # Estimate uncertainty
             uncert, interp = analyze_uncertainty(reference_dataset,
