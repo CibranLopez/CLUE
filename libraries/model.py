@@ -239,6 +239,7 @@ class eGCNN(
 
         neurons_n_1 = 32
         neurons_n_2 = 64
+        neurons_n_3 = 32
 
         neurons_e_1 = 32
         neurons_e_2 = 32
@@ -246,7 +247,7 @@ class eGCNN(
         # Node update layers (GraphConv)
         self.node_conv1 = GraphConv(features_channels, neurons_n_1)
         self.node_conv2 = GraphConv(neurons_n_1, neurons_n_2)
-        self.node_conv3 = GraphConv(neurons_n_2, features_channels)
+        self.node_conv3 = GraphConv(neurons_n_2, neurons_n_3)
 
         # Edge update layers (Linear)
         self.edge_linear_f1 = Linear(2*features_channels+1, neurons_e_1)  # From ini to multi
@@ -259,12 +260,24 @@ class eGCNN(
         self.node_norm1 = torch.nn.BatchNorm1d(256)
         self.edge_norm1 = torch.nn.BatchNorm1d(64)
 
+        # Define graph convolution layers
+        self.conv1 = GraphConv(neurons_n_3, 32)
+        self.conv2 = GraphConv(32, 32)
+        
+        # Define linear layers
+        self.lin1 = Linear(32, 16)
+        self.lin2 = Linear(16, 6)
+        self.lin  = Linear(6, 1)
+        
+        self.pdropout = pdropout
+
         self.pdropout_node = pdropout
         self.pdropout_edge = pdropout
 
     def forward(
             self,
-            batch
+            batch,
+            return_graph_embedding=False
     ):
         """
         Perform forward propagation alternately updating nodes and edges.
@@ -289,13 +302,29 @@ class eGCNN(
 
         # Update 3
         x = self.node_forward(batch, self.node_conv3)
+
+        # Apply global mean pooling to reduce dimensionality
+        x = global_mean_pool(x, batch)  # [batch_size, hidden_channels]
+
+        # Apply dropout regularization
+        x = F.dropout(x, p=self.pdropout, training=self.training)
+        
+        # Apply linear convolution with ReLU activation function
+        x = self.lin1(x)
+        x = x.relu()
+        x = self.lin2(x)
+        if return_graph_embedding:
+            return x
+        x = x.relu()
+        
+        # Apply final linear layer to make prediction
+        x = self.lin(x)
         return x
 
     def node_forward(
             self,
             batch,
-            node_conv,
-            return_graph_embedding=False
+            node_conv
     ):
         """
         Update node embeddings using the current node features and edge attributes.
@@ -311,8 +340,6 @@ class eGCNN(
         x, edge_index, edge_attr = batch.x, batch.edge_index, batch.edge_attr
 
         x = node_conv(x, edge_index, edge_attr)
-        if return_graph_embedding:
-            return x
         x = x.relu()
         return x
 
@@ -387,8 +414,8 @@ class GCNN(
         
         # Define linear layers
         self.lin1 = Linear(32, 16)
-        self.lin2 = Linear(16, 8)
-        self.lin  = Linear(8, 1)
+        self.lin2 = Linear(16, 6)
+        self.lin  = Linear(6, 1)
         
         self.pdropout = pdropout
 
@@ -413,9 +440,9 @@ class GCNN(
             torch.Tensor: Predicted values.
         """
         # Apply graph convolution with ReLU activation function
-        x = self.conv1(x, edge_index, edge_attr)
+        x = self.conv1(batch.x, batch.edge_index, batch.edge_attr)
         x = x.relu()
-        x = self.conv2(x, edge_index, edge_attr)
+        x = self.conv2(x, batch.edge_index, batch.edge_attr)
         x = x.relu()
 
         # Apply global mean pooling to reduce dimensionality
@@ -675,7 +702,7 @@ def load_model(
         mode='eval'
 ):
     # Load Graph Neural Network model
-    model = GCNN(features_channels=n_node_features, pdropout=pdropout)
+    model = eGCNN(features_channels=n_node_features, pdropout=pdropout)
 
     # Moving model to device
     model = model.to(device)
