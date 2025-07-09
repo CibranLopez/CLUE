@@ -8,7 +8,7 @@ from scipy.interpolate      import RBFInterpolator, CubicSpline
 from scipy.spatial          import Delaunay
 from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
-from torch.nn               import Linear
+from torch.nn               import Linear, BatchNorm1d
 from torch_geometric.nn     import GraphConv, global_mean_pool
 from sklearn.decomposition  import PCA
 
@@ -133,10 +133,7 @@ def extract_embeddings(
     embeddings = []
     for batch in loader:
         batch = batch.to(device)
-        embedding = model(
-            batch.x, batch.edge_index, batch.edge_attr, batch.batch,
-            return_graph_embedding=True
-        ).cpu().numpy()
+        embedding = model(batch, return_graph_embedding=True).cpu().numpy()
         embeddings.append(embedding)
 
     # Concatenate all batch embeddings into a single array
@@ -194,8 +191,7 @@ def estimate_out_of_distribution(
     """
     # Generate embeddings for target dataset
     t_batch = Batch.from_data_list(t_dataset).to(device)
-    t_embeddings = model(t_batch.x, t_batch.edge_index, t_batch.edge_attr, t_batch.batch,
-                         return_graph_embedding=True)
+    t_embeddings = model(t_batch, return_graph_embedding=True).cpu().numpy()
 
     closest_distances = torch.full((t_embeddings.size(0),), float('inf'), device=device)
 
@@ -205,10 +201,7 @@ def estimate_out_of_distribution(
     # Process the reference dataset in batches using the DataLoader
     for r_batch in r_loader:
         r_batch = r_batch.to(device)
-        r_embeddings = model(
-            r_batch.x, r_batch.edge_index, r_batch.edge_attr, r_batch.batch,
-            return_graph_embedding=True
-        )
+        r_embeddings = model(r_batch, return_graph_embedding=True).cpu().numpy()
 
         # Compute pairwise distances
         pairwise_distances = torch.cdist(t_embeddings, r_embeddings)
@@ -237,25 +230,27 @@ class eGCNN(
 
         torch.manual_seed(12345)
 
-        neurons_n_1 = 32
-        neurons_n_2 = 64
+        neurons_n_1 = 16
+        neurons_n_2 = 16
+        neurons_n_3 = 8
 
-        neurons_e_1 = 64
+        neurons_e_1 = 16
+        neurons_e_2 = 8
 
         # Node update layers (GraphConv)
         self.node_conv1 = GraphConv(features_channels, neurons_n_1)
         self.node_conv2 = GraphConv(neurons_n_1, neurons_n_2)
+        self.node_conv3 = GraphConv(neurons_n_2, neurons_n_3)
 
         # Edge update layers (Linear)
         self.edge_linear_f1 = Linear(2*features_channels+1, neurons_e_1)  # From ini to multi
         self.edge_linear_r1 = Linear(neurons_e_1, 1)  # From multi to 1
-        
-        # Define graph convolution layers
-        self.conv1 = GraphConv(neurons_n_2, 32)
-        self.conv2 = GraphConv(32, 32)
+
+        self.edge_linear_f2 = Linear(2*neurons_n_1+1, neurons_e_2)  # From ini to multi
+        self.edge_linear_r2 = Linear(neurons_e_2, 1)  # From multi to 1
         
         # Define linear layers
-        self.lin1 = Linear(32, 6)
+        self.lin1 = Linear(neurons_n_3, 6)
         self.lin  = Linear(6, 1)
         
         self.pdropout = pdropout
@@ -284,8 +279,13 @@ class eGCNN(
         edge_attr = self.edge_forward(batch, self.edge_linear_f1, self.edge_linear_r1)
         batch.x, batch.edge_attr = x, edge_attr
 
-        # Update 2
+        # Update 1
         x         = self.node_forward(batch, self.node_conv2)
+        edge_attr = self.edge_forward(batch, self.edge_linear_f2, self.edge_linear_r2)
+        batch.x, batch.edge_attr = x, edge_attr
+
+        # Update 2
+        x         = self.node_forward(batch, self.node_conv3)
 
         # Apply global mean pooling to reduce dimensionality
         x = global_mean_pool(x, batch.batch)  # [batch_size, hidden_channels]
@@ -358,7 +358,6 @@ class eGCNN(
         edge_attr = edge_linear_reverse(edge_attr).ravel()
         return edge_attr
 
-
 class GCNN(
     torch.nn.Module
 ):
@@ -386,12 +385,14 @@ class GCNN(
         
         # Define graph convolution layers
         self.conv1 = GraphConv(features_channels, 32)
-        self.conv2 = GraphConv(32, 32)
+        self.conv2 = GraphConv(32, 64)
         
         # Define linear layers
-        self.lin1 = Linear(32, 16)
-        self.lin2 = Linear(16, 6)
+        self.lin1 = Linear(64, 32)
+        self.lin2 = Linear(32, 6)
         self.lin  = Linear(6, 1)
+        
+        self.bn1 = BatchNorm1d(64)
         
         self.pdropout = pdropout
 
@@ -416,6 +417,7 @@ class GCNN(
         x = self.conv1(batch.x, batch.edge_index, batch.edge_attr)
         x = x.relu()
         x = self.conv2(x, batch.edge_index, batch.edge_attr)
+        x = self.bn1(x)
         x = x.relu()
 
         # Apply global mean pooling to reduce dimensionality
@@ -434,6 +436,14 @@ class GCNN(
         
         # Apply final linear layer to make prediction
         x = self.lin(x)
+
+        a, b = -144.03716, 210.11977
+        
+        # Apply custom activation to constrain output between 1 and 4
+        #x = torch.clamp(x, min=a, max=b)
+        
+        #x = a + (b - a) * torch.sigmoid(x)
+        
         return x
 
         
@@ -665,6 +675,7 @@ class EarlyStopping():
         if val_loss < self.val_loss_min:
             torch.save(model.module.state_dict(), self.model_name)
             self.val_loss_min = val_loss
+            self.val_loss_min = np.inf
 
 
 def load_model(
@@ -675,7 +686,7 @@ def load_model(
         mode='eval'
 ):
     # Load Graph Neural Network model
-    model = eGCNN(features_channels=n_node_features, pdropout=pdropout)
+    model = GCNN(features_channels=n_node_features, pdropout=pdropout)
 
     # Moving model to device
     model = model.to(device)
