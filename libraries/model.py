@@ -48,7 +48,8 @@ def analyze_uncertainty(
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    t_interpolations = is_interpolating(r_embeddings, t_embeddings)
+    #t_interpolations = is_interpolating(r_embeddings, t_embeddings)
+    t_interpolations = np.array([True] * len(t_embeddings))
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
