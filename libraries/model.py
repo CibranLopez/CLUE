@@ -41,15 +41,15 @@ def analyze_uncertainty(
     t_embeddings = extract_embeddings(t_dataset, model)
 
     # It fails with illdefined spaces, thus with ReLU activation function as well
-    #r_embeddings[r_embeddings<0] *= 1e-8
-    #t_embeddings[t_embeddings<0] *= 1e-8
+    r_embeddings[r_embeddings<0] *= 1e-8
+    t_embeddings[t_embeddings<0] *= 1e-8
 
     # Extract labels from r_dataset
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    #t_interpolations = is_interpolating(r_embeddings, t_embeddings)
-    t_interpolations = np.array([True] * len(t_embeddings))
+    t_interpolations = is_interpolating(r_embeddings, t_embeddings)
+    #t_interpolations = np.array([True] * len(t_embeddings))
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
