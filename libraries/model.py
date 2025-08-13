@@ -11,6 +11,8 @@ from torch_geometric.loader import DataLoader
 from torch.nn               import Linear, BatchNorm1d
 from torch_geometric.nn     import GraphConv, global_mean_pool
 from sklearn.decomposition  import PCA
+from sklearn.neighbors import NearestNeighbors
+from sklearn.preprocessing import StandardScaler
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -48,16 +50,65 @@ def analyze_uncertainty(
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    t_interpolations = is_interpolating(r_embeddings, t_embeddings)
-    #t_interpolations = np.array([True] * len(t_embeddings))
+    #t_interpolations = is_interpolating(r_embeddings, t_embeddings, n_components=5)
+    #t_interpolations = knn_ood_score(r_embeddings, t_embeddings)
+    t_interpolations = np.array([True] * len(t_embeddings))
 
     # Determine the uncertainty on the predictions
-    t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
+    t_uncertainties = estimate_uncertainty_2(r_embeddings, r_labels,
                                            r_uncertainty_data,
                                            t_embeddings,
                                            t_interpolations)
 
     return t_uncertainties, t_interpolations
+
+
+
+def estimate_uncertainty_2(
+    r_embeddings,
+    r_labels,
+    r_uncertainty_data,
+    t_embeddings,
+    t_interpolations,
+    interpolating_method='RBF'
+):
+
+    r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
+    
+    # --- Offline (prepare once) ---
+    Z_train = np.vstack(r_embeddings)       # shape (N, d)
+    E_train = np.array(r_uncertainties)         # shape (N,)
+    scaler = StandardScaler().fit(Z_train)
+    Zs = scaler.transform(Z_train)
+    
+    # median nearest neighbor distance (robust scale)
+    nbrs_all = NearestNeighbors(n_neighbors=2).fit(Zs)
+    dists_all, idxs_all = nbrs_all.kneighbors(Zs)
+    median_nn = np.median(dists_all[:,1])
+    
+    # choose k
+    N = Zs.shape[0]
+    k = max(5, min(50, int(np.sqrt(N))))
+    
+    nbrs = NearestNeighbors(n_neighbors=k).fit(Zs)
+
+    p   = 2
+    eps = 1e-8
+
+    z_query = np.vstack(t_embeddings)
+    z_s = scaler.transform(z_query)[0]
+    d, idx = nbrs.kneighbors(z_s.reshape(1,-1), return_distance=True)
+    d = d[0]; idx = idx[0]
+    errs = E_train[idx]
+
+    w = 1.0 / ( (d + eps) ** p )
+    u_interp = np.sqrt( np.sum(w * errs**2) / np.sum(w) )
+
+    d_min = d.min()
+    novelty = d_min / (median_nn + eps)
+
+    U = u_interp * (1.0 + novelty)
+    return [U, u_interp, novelty]
 
 
 def estimate_uncertainty(
@@ -171,6 +222,43 @@ def is_interpolating(
     # Convert to boolean: True for interpolation, False for extrapolation
     are_interpolated = simplex_indices != -1
     return are_interpolated
+
+
+def knn_ood_score(
+    r_embeddings,
+    t_embeddings,
+    n_neighbors=5
+):
+    """
+    Compute an OOD score for test points based on k-NN distance to training points.
+
+    Parameters
+    ----------
+    train_embeddings : np.ndarray, shape (n_train, d)
+        Latent representations of the training set.
+    test_embeddings : np.ndarray, shape (n_test, d)
+        Latent representations of the test set.
+    k : int
+        Number of nearest neighbors to consider.
+
+    Returns
+    -------
+    ood_scores : np.ndarray, shape (n_test,)
+        Mean distance to k nearest neighbors in the training set.
+        Larger values = more likely OOD.
+    """
+    # Fit nearest neighbors model on training embeddings
+    nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='auto').fit(r_embeddings)
+    
+    # Find distances to the k nearest neighbors for each test point
+    distances, _ = nbrs.kneighbors(t_embeddings)
+    
+    # Use mean distance as OOD score
+    scores = distances.mean(axis=1)
+    
+    threshold = np.percentile(scores, 95)  # mark top 5% farthest points as OOD
+    ood_flags = scores > threshold
+    return ood_flags
 
 
 def estimate_out_of_distribution(
