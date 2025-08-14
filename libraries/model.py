@@ -51,15 +51,14 @@ def analyze_uncertainty(
 
     # Determine which points are in the interpolation/extrapolation regime
     #t_interpolations = is_interpolating(r_embeddings, t_embeddings, n_components=5)
-    #t_interpolations = knn_ood_score(r_embeddings, t_embeddings)
-    t_interpolations = np.array([True] * len(t_embeddings))
+    t_interpolations = knn_ood_score(r_embeddings, t_embeddings)
+    #t_interpolations = np.array([True] * len(t_embeddings))
 
     # Determine the uncertainty on the predictions
-    t_uncertainties = estimate_uncertainty_2(r_embeddings, r_labels,
+    t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
                                            r_uncertainty_data,
                                            t_embeddings,
                                            t_interpolations)
-
     return t_uncertainties, t_interpolations
 
 
@@ -108,7 +107,8 @@ def estimate_uncertainty_2(
     novelty = d_min / (median_nn + eps)
 
     U = u_interp * (1.0 + novelty)
-    return [U, u_interp, novelty]
+    #return [U, u_interp, novelty]
+    return U
 
 
 def estimate_uncertainty(
@@ -256,7 +256,7 @@ def knn_ood_score(
     # Use mean distance as OOD score
     scores = distances.mean(axis=1)
     
-    threshold = np.percentile(scores, 95)  # mark top 5% farthest points as OOD
+    threshold = np.percentile(scores, 99)  # mark top 5% farthest points as OOD
     ood_flags = scores > threshold
     return ood_flags
 
