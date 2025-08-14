@@ -43,8 +43,8 @@ def analyze_uncertainty(
     t_embeddings = extract_embeddings(t_dataset, model)
 
     # It fails with illdefined spaces, thus with ReLU activation function as well
-    r_embeddings[r_embeddings<0] *= 1e-8
-    t_embeddings[t_embeddings<0] *= 1e-8
+    #r_embeddings[r_embeddings<0] *= 1e-8
+    #t_embeddings[t_embeddings<0] *= 1e-8
 
     # Extract labels from r_dataset
     r_labels = [data.label for data in r_dataset]
@@ -257,6 +257,7 @@ def knn_ood_score(
     scores = distances.mean(axis=1)
     
     threshold = np.percentile(scores, 99)  # mark top 5% farthest points as OOD
+    # which is in fact similar to comparing to the mean (Gaussian distribution)
     ood_flags = scores > threshold
     return ood_flags
 
