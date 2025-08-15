@@ -117,9 +117,11 @@ def estimate_uncertainty(
     r_uncertainty_data,
     t_embeddings,
     t_interpolations,
-    interpolating_method='RBF'
+    interpolating_method='RBF',
+    novelty_k=None
 ):
-    """Estimate the uncertainty of the target dataset by interpolation.
+    """Estimate the uncertainty of the target dataset by interpolation,
+    scaling it by (1 + novelty) where novelty is the average kNN distance.
 
     Sets the uncertainty of extrapolated points to the maximum uncertainty between the expected one and that
     of the closest point in the reference dataset. Uncertainties for interpolated points remain unchanged.
@@ -131,10 +133,14 @@ def estimate_uncertainty(
         t_embeddings         (numpy.ndarray): Target embeddings.
         t_interpolations     (numpy.ndarray): Boolean array indicating if the target embeddings are interpolated.
         interpolating_method (str):           Interpolation method ('RBF' or 'spline').
+        novelty_k            (int):           Number of neighbors for novelty estimation.
 
     Returns:
         numpy.ndarray: Uncertainties of the target dataset.
     """
+    # Get adaptative k-NN in case it is not provided
+    novelty_k = min(5, len(r_embeddings)//10) if novelty_k is None else novelty_k
+    
     # Extract uncertainties for each reference example
     r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
 
@@ -149,11 +155,14 @@ def estimate_uncertainty(
     # Interpolate uncertainties for the target dataset
     t_uncertainties = interpolator(t_embeddings)
 
-    # Compute pairwise distances between target and reference embeddings
-    distances = np.linalg.norm(t_embeddings[:, None, :] - r_embeddings[None, :, :], axis=2)
+    # Compute novelty using kNN distance
+    nbrs = NearestNeighbors(n_neighbors=novelty_k).fit(r_embeddings)
+    distances, indices = nbrs.kneighbors(t_embeddings)
+    novelty = distances.mean(axis=1)  # average distance to k nearest neighbors
+    closest_indices = indices[:, 0]  # first neighbor
 
-    # Find the closest reference point for each target embedding
-    closest_indices = np.argmin(distances, axis=1)
+    # Apply novelty scaling: uncertainty *= (1 + novelty)
+    t_uncertainties *= (1.0 + novelty)
 
     # Update uncertainties for extrapolated points
     extrapolated_mask = ~t_interpolations
@@ -256,9 +265,9 @@ def knn_ood_score(
     # Use mean distance as OOD score
     scores = distances.mean(axis=1)
     
-    threshold = np.percentile(scores, 99)  # mark top 5% farthest points as OOD
+    threshold = np.percentile(scores, 90)  # mark top 5% farthest points as OOD
     # which is in fact similar to comparing to the mean (Gaussian distribution)
-    ood_flags = scores > threshold
+    ood_flags = scores < threshold
     return ood_flags
 
 
