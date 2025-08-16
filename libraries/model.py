@@ -157,11 +157,24 @@ def estimate_uncertainty(
 
     # Compute novelty using kNN distance
     nbrs = NearestNeighbors(n_neighbors=novelty_k).fit(r_embeddings)
-    distances, indices = nbrs.kneighbors(t_embeddings)
-    novelty = distances.mean(axis=1)  # average distance to k nearest neighbors
+    
+    # Mean k-NN distances for reference set
+    ref_knn_dists, _ = nbrs.kneighbors(r_embeddings)
+    ref_knn_means = np.mean(ref_knn_dists, axis=1)
+
+    # Normalization factor: 95th percentile of reference mean distances
+    norm_factor = np.percentile(ref_knn_means, 95)
+
+    # Mean k-NN distances for target set
+    tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
+    tgt_knn_means = np.mean(tgt_knn_dists, axis=1)  # average distance to k nearest neighbors
     closest_indices = indices[:, 0]  # first neighbor
 
+    # Normalized novelty
+    novelty = tgt_knn_means / (norm_factor + 1e-12)
+    
     # Apply novelty scaling: uncertainty *= (1 + novelty)
+    print(novelty)
     t_uncertainties *= (1.0 + novelty)
 
     # Update uncertainties for extrapolated points
