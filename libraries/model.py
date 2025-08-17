@@ -62,55 +62,6 @@ def analyze_uncertainty(
     return t_uncertainties, t_interpolations
 
 
-
-def estimate_uncertainty_2(
-    r_embeddings,
-    r_labels,
-    r_uncertainty_data,
-    t_embeddings,
-    t_interpolations,
-    interpolating_method='RBF'
-):
-
-    r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
-    
-    # --- Offline (prepare once) ---
-    Z_train = np.vstack(r_embeddings)       # shape (N, d)
-    E_train = np.array(r_uncertainties)         # shape (N,)
-    scaler = StandardScaler().fit(Z_train)
-    Zs = scaler.transform(Z_train)
-    
-    # median nearest neighbor distance (robust scale)
-    nbrs_all = NearestNeighbors(n_neighbors=2).fit(Zs)
-    dists_all, idxs_all = nbrs_all.kneighbors(Zs)
-    median_nn = np.median(dists_all[:,1])
-    
-    # choose k
-    N = Zs.shape[0]
-    k = max(5, min(50, int(np.sqrt(N))))
-    
-    nbrs = NearestNeighbors(n_neighbors=k).fit(Zs)
-
-    p   = 2
-    eps = 1e-8
-
-    z_query = np.vstack(t_embeddings)
-    z_s = scaler.transform(z_query)[0]
-    d, idx = nbrs.kneighbors(z_s.reshape(1,-1), return_distance=True)
-    d = d[0]; idx = idx[0]
-    errs = E_train[idx]
-
-    w = 1.0 / ( (d + eps) ** p )
-    u_interp = np.sqrt( np.sum(w * errs**2) / np.sum(w) )
-
-    d_min = d.min()
-    novelty = d_min / (median_nn + eps)
-
-    U = u_interp * (1.0 + novelty)
-    #return [U, u_interp, novelty]
-    return U
-
-
 def estimate_uncertainty(
     r_embeddings,
     r_labels,
@@ -140,6 +91,7 @@ def estimate_uncertainty(
     """
     # Get adaptative k-NN in case it is not provided
     novelty_k = min(5, len(r_embeddings)//10) if novelty_k is None else novelty_k
+    novelty_k = 3
     
     # Extract uncertainties for each reference example
     r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
@@ -163,7 +115,7 @@ def estimate_uncertainty(
     ref_knn_means = np.mean(ref_knn_dists, axis=1)
 
     # Normalization factor: 95th percentile of reference mean distances
-    norm_factor = np.percentile(ref_knn_means, 95)
+    norm_factor = np.percentile(ref_knn_means, 99)
 
     # Mean k-NN distances for target set
     tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
@@ -171,10 +123,9 @@ def estimate_uncertainty(
     closest_indices = indices[:, 0]  # first neighbor
 
     # Normalized novelty
-    novelty = tgt_knn_means / (norm_factor + 1e-12)
+    novelty = tgt_knn_means / norm_factor
     
     # Apply novelty scaling: uncertainty *= (1 + novelty)
-    print(novelty)
     t_uncertainties *= (1.0 + novelty)
 
     # Update uncertainties for extrapolated points
