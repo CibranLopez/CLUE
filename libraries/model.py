@@ -52,7 +52,6 @@ def analyze_uncertainty(
     # Determine which points are in the interpolation/extrapolation regime
     #t_interpolations = is_interpolating(r_embeddings, t_embeddings, n_components=5)
     t_interpolations = knn_ood_score(r_embeddings, t_embeddings)
-    #t_interpolations = np.array([True] * len(t_embeddings))
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
@@ -68,7 +67,7 @@ def estimate_uncertainty(
     r_uncertainty_data,
     t_embeddings,
     t_interpolations,
-    interpolating_method='RBF',
+    interpolating_method='kNN',
     novelty_k=None
 ):
     """Estimate the uncertainty of the target dataset by interpolation,
@@ -91,42 +90,53 @@ def estimate_uncertainty(
     """
     # Get adaptative k-NN in case it is not provided
     novelty_k = min(5, len(r_embeddings)//10) if novelty_k is None else novelty_k
-    novelty_k = 3
+    novelty_k = 10
     
     # Extract uncertainties for each reference example
     r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
 
-    # Select interpolation method
-    if interpolating_method == 'RBF':
-        interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
-    elif interpolating_method == 'spline':
-        interpolator = CubicSpline(r_embeddings, r_uncertainties)
+    # Compute novelty using kNN distance
+    nbrs = NearestNeighbors(n_neighbors=novelty_k, algorithm="auto").fit(r_embeddings)
+
+    if interpolating_method in ['RBF', 'spline']:
+        if interpolating_method == 'RBF':
+            interpolator = RBFInterpolator(r_embeddings, r_uncertainties, smoothing=0)
+        elif interpolating_method == 'spline':
+            interpolator = CubicSpline(r_embeddings, r_uncertainties)
+
+        # Interpolate uncertainties for the target dataset
+        t_uncertainties = interpolator(t_embeddings)
+
+    elif interpolating_method == 'kNN':
+        # k-NN weighted uncertainty
+        tgt_dists, tgt_indices = nbrs.kneighbors(t_embeddings)
+        weights = 1.0 / (tgt_dists + 1e-12)
+        weights /= weights.sum(axis=1, keepdims=True)
+        t_uncertainties = np.sum(weights * r_uncertainties[tgt_indices], axis=1)
+
     else:
         raise ValueError(f"Unsupported interpolation method: {interpolating_method}")
 
-    # Interpolate uncertainties for the target dataset
-    t_uncertainties = interpolator(t_embeddings)
-
-    # Compute novelty using kNN distance
-    nbrs = NearestNeighbors(n_neighbors=novelty_k).fit(r_embeddings)
-    
     # Mean k-NN distances for reference set
     ref_knn_dists, _ = nbrs.kneighbors(r_embeddings)
     ref_knn_means = np.mean(ref_knn_dists, axis=1)
-
+    
     # Normalization factor: 95th percentile of reference mean distances
     norm_factor = np.percentile(ref_knn_means, 99)
 
     # Mean k-NN distances for target set
     tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
     tgt_knn_means = np.mean(tgt_knn_dists, axis=1)  # average distance to k nearest neighbors
-    closest_indices = indices[:, 0]  # first neighbor
 
     # Normalized novelty
     novelty = tgt_knn_means / norm_factor
+    novelty = 0
     
     # Apply novelty scaling: uncertainty *= (1 + novelty)
     t_uncertainties *= (1.0 + novelty)
+
+    # First neighbors list
+    closest_indices = indices[:, 0]
 
     # Update uncertainties for extrapolated points
     extrapolated_mask = ~t_interpolations
@@ -136,7 +146,6 @@ def estimate_uncertainty(
     )
 
     return t_uncertainties
-
 
 def extract_embeddings(
         dataset,
@@ -233,47 +242,6 @@ def knn_ood_score(
     # which is in fact similar to comparing to the mean (Gaussian distribution)
     ood_flags = scores < threshold
     return ood_flags
-
-
-def estimate_out_of_distribution(
-        r_dataset,
-        t_dataset,
-        model
-):
-    """We use the pooling from a graph neural network, which is a vector representation of the
-    material, to assess the similarity between the target graph with respect to the dataset.
-
-    Args:
-        r_dataset (list):            The reference dataset, as a list of graphs in PyTorch Geometric's Data format.
-        t_dataset (list):            Target dataset to assess the similarity on.
-        model     (torch.nn.Module): PyTorch model for predictions.
-
-    Returns:
-        list ints:   Indexes of the closest example referred to the reference dataset.
-        list floats: Distances to the distribution.
-    """
-    # Generate embeddings for target dataset
-    t_batch = Batch.from_data_list(t_dataset).to(device)
-    t_embeddings = model(t_batch, return_graph_embedding=True).cpu().numpy()
-
-    closest_distances = torch.full((t_embeddings.size(0),), float('inf'), device=device)
-
-    # Create a DataLoader for the reference dataset
-    r_loader = DataLoader(r_dataset, batch_size=64, shuffle=False)
-
-    # Process the reference dataset in batches using the DataLoader
-    for r_batch in r_loader:
-        r_batch = r_batch.to(device)
-        r_embeddings = model(r_batch, return_graph_embedding=True).cpu().numpy()
-
-        # Compute pairwise distances
-        pairwise_distances = torch.cdist(t_embeddings, r_embeddings)
-
-        # Update global closest distances
-        closest_distances = torch.minimum(closest_distances, torch.min(pairwise_distances, dim=1).values)
-
-    # Move results to CPU and return as a list
-    return closest_distances.cpu().numpy()
 
 
 class GCNN(
