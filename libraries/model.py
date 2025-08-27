@@ -67,7 +67,7 @@ def estimate_uncertainty(
     r_uncertainty_data,
     t_embeddings,
     t_interpolations,
-    interpolating_method='kNN',
+    interpolating_method='RBF',
     novelty_k=None
 ):
     """Estimate the uncertainty of the target dataset by interpolation,
@@ -90,7 +90,7 @@ def estimate_uncertainty(
     """
     # Get adaptative k-NN in case it is not provided
     novelty_k = min(5, len(r_embeddings)//10) if novelty_k is None else novelty_k
-    novelty_k = 10
+    novelty_k = 3
     
     # Extract uncertainties for each reference example
     r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
@@ -110,8 +110,17 @@ def estimate_uncertainty(
     elif interpolating_method == 'kNN':
         # k-NN weighted uncertainty
         tgt_dists, tgt_indices = nbrs.kneighbors(t_embeddings)
-        weights = 1.0 / (tgt_dists + 1e-12)
+        
+        #sigma = np.mean(tgt_dists)  # or use reference mean distance
+        #weights = np.exp(- (tgt_dists**2) / (2*sigma**2))
+        #weights /= weights.sum(axis=1, keepdims=True)
+
+        max_dist = tgt_dists.max()
+        weights = (max_dist - tgt_dists) / max_dist
         weights /= weights.sum(axis=1, keepdims=True)
+        
+        #weights = 1.0 / (tgt_dists + 1e-12)
+        #weights /= weights.sum(axis=1, keepdims=True)
         t_uncertainties = np.sum(weights * r_uncertainties[tgt_indices], axis=1)
 
     else:
@@ -121,7 +130,7 @@ def estimate_uncertainty(
     ref_knn_dists, _ = nbrs.kneighbors(r_embeddings)
     ref_knn_means = np.mean(ref_knn_dists, axis=1)
     
-    # Normalization factor: 95th percentile of reference mean distances
+    # Normalization factor based on percentile of reference mean distances
     norm_factor = np.percentile(ref_knn_means, 99)
 
     # Mean k-NN distances for target set
@@ -130,10 +139,10 @@ def estimate_uncertainty(
 
     # Normalized novelty
     novelty = tgt_knn_means / norm_factor
-    novelty = 0
     
-    # Apply novelty scaling: uncertainty *= (1 + novelty)
+    # Apply novelty scaling
     t_uncertainties *= (1.0 + novelty)
+    t_uncertainties = np.abs(t_uncertainties)
 
     # First neighbors list
     closest_indices = indices[:, 0]
