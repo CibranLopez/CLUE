@@ -90,7 +90,6 @@ def estimate_uncertainty(
     """
     # Get adaptative k-NN in case it is not provided
     novelty_k = min(5, len(r_embeddings)//10) if novelty_k is None else novelty_k
-    novelty_k = 3
     
     # Extract uncertainties for each reference example
     r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
@@ -110,17 +109,16 @@ def estimate_uncertainty(
     elif interpolating_method == 'kNN':
         # k-NN weighted uncertainty
         tgt_dists, tgt_indices = nbrs.kneighbors(t_embeddings)
-        
-        #sigma = np.mean(tgt_dists)  # or use reference mean distance
-        #weights = np.exp(- (tgt_dists**2) / (2*sigma**2))
-        #weights /= weights.sum(axis=1, keepdims=True)
 
-        max_dist = tgt_dists.max()
-        weights = (max_dist - tgt_dists) / max_dist
+        method = 'inverse'
+        if   method == 'exponential': weights = np.exp(- np.power(tgt_dists / 2*tgt_dists.mean(), 2))
+        elif method == 'lineal':      weights = 1 - tgt_dists / tgt_dists.max()
+        elif method == 'inverse':     weights = 1 / tgt_dists
+
+        # Normalize weights
         weights /= weights.sum(axis=1, keepdims=True)
-        
-        #weights = 1.0 / (tgt_dists + 1e-12)
-        #weights /= weights.sum(axis=1, keepdims=True)
+
+        # Weighted mean of uncertainties
         t_uncertainties = np.sum(weights * r_uncertainties[tgt_indices], axis=1)
 
     else:
@@ -148,10 +146,11 @@ def estimate_uncertainty(
     closest_indices = indices[:, 0]
 
     # Update uncertainties for extrapolated points
+    # it has to be that of the maximum when in absolute (but value not in absolute)
     extrapolated_mask = ~t_interpolations
     t_uncertainties[extrapolated_mask] = np.maximum(
         t_uncertainties[extrapolated_mask],
-        r_uncertainties[closest_indices[extrapolated_mask]]
+        np.abs(r_uncertainties[closest_indices[extrapolated_mask]])
     )
 
     return t_uncertainties
@@ -346,20 +345,20 @@ class GCNN2(
         Returns:
             None
         """
+        
         super(GCNN, self).__init__()
         
         # Set random seed for reproducibility
         torch.manual_seed(12345)
         
         # Define graph convolution layers
-        self.conv1 = GraphConv(features_channels, 64)
-        self.conv2 = GraphConv(64, 128)
-        
+        self.conv1 = GraphConv(features_channels, 32)
+        self.conv2 = GraphConv(32, 32)
+
         # Define linear layers
-        self.lin1 = Linear(128, 6)
-        self.lin  = Linear(6, 1)
-        
-        #self.bn1 = BatchNorm1d(128)
+        self.lin1 = Linear(32, 16)
+        self.lin2 = Linear(16, 8)
+        self.lin  = Linear(8, 1)
         
         self.pdropout = pdropout
 
@@ -368,18 +367,6 @@ class GCNN2(
             batch,
             return_graph_embedding=False
     ):
-        """Forward pass of the Graph Convolutional Neural Network.
-
-        Args:
-            x                    (torch.Tensor): Node features.
-            edge_index           (torch.Tensor): Edge indices.
-            edge_attr            (torch.Tensor): Edge attributes.
-            batch                (torch.Tensor): Batch indices.
-            return_graph_embedding (bool):        Return graph embeddings.
-
-        Returns:
-            torch.Tensor: Predicted values.
-        """
         # Apply graph convolution with ReLU activation function
         x = self.conv1(batch.x, batch.edge_index, batch.edge_attr)
         x = x.relu()
@@ -391,21 +378,20 @@ class GCNN2(
 
         # Apply dropout regularization
         x = F.dropout(x, p=self.pdropout, training=self.training)
-        
+
         # Apply linear convolution with ReLU activation function
         x = self.lin1(x)
-        #x = self.bn1(x)
-        #x = x.relu()
-        #x = self.lin2(x)
+        x = x.relu()
+        x = self.lin2(x)
         if return_graph_embedding:
             return x
         x = x.relu()
-        
+
         # Apply final linear layer to make prediction
         x = self.lin(x)
         return x
 
-        
+
 def train(
         model,
         criterion,
