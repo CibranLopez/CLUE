@@ -90,7 +90,7 @@ def estimate_uncertainty(
     """
     # Get adaptative k-NN in case it is not provided
     novelty_k = min(5, len(r_embeddings)//10) if novelty_k is None else novelty_k
-    novelty_k = 3
+    novelty_k = 20
     
     # Extract uncertainties for each reference example
     r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
@@ -130,7 +130,7 @@ def estimate_uncertainty(
     ref_knn_means = np.mean(ref_knn_dists, axis=1)
     
     # Normalization factor based on percentile of reference mean distances
-    norm_factor = np.percentile(ref_knn_means, 95)
+    norm_factor = np.percentile(ref_knn_means, 85)
 
     # Mean k-NN distances for target set
     tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
