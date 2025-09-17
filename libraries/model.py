@@ -130,7 +130,7 @@ def estimate_uncertainty(
     ref_knn_means = np.mean(ref_knn_dists, axis=1)
     
     # Normalization factor based on percentile of reference mean distances
-    norm_factor = np.percentile(ref_knn_means, 85)
+    norm_factor = np.percentile(ref_knn_means, 75)
 
     # Mean k-NN distances for target set
     tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
