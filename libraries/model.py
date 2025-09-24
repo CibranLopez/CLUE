@@ -6,13 +6,11 @@ import os
 
 from scipy.interpolate      import RBFInterpolator, CubicSpline
 from scipy.spatial          import Delaunay
-from torch_geometric.data   import Batch
 from torch_geometric.loader import DataLoader
-from torch.nn               import Linear, BatchNorm1d
+from torch.nn               import Linear
 from torch_geometric.nn     import GraphConv, global_mean_pool
 from sklearn.decomposition  import PCA
-from sklearn.neighbors import NearestNeighbors
-from sklearn.preprocessing import StandardScaler
+from sklearn.neighbors      import NearestNeighbors
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -50,7 +48,7 @@ def analyze_uncertainty(
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    t_interpolations = estimate_extrapolations(r_embeddings, t_embeddings, method='PCA', n_components=None)  # or 'knn'
+    t_interpolations = estimate_extrapolation(r_embeddings, t_embeddings, method='PCA', n_components=None)  # or 'knn'
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
@@ -130,7 +128,6 @@ def estimate_uncertainty(
     
     # Normalization factor based on percentile of reference mean distances
     norm_factor = np.percentile(ref_knn_means, 90)
-    #norm_factor = np.mean(ref_knn_dists)
 
     # Mean k-NN distances for target set
     tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
@@ -155,6 +152,57 @@ def estimate_uncertainty(
     #)
 
     return t_uncertainties
+
+def estimate_extrapolation(
+    r_embeddings,
+    t_embeddings,
+    method='PCA',
+    n_components=None,
+    n_neighbors=5
+):
+    """Check if the target embeddings are in the extrapolation regime. If n_components is not None,
+    it reduces dimensionality of embeddings to n_components dimensions.
+
+    Args:
+        r_embeddings (numpy.ndarray): Reference embeddings.
+        t_embeddings (numpy.ndarray): Target embeddings.
+        method       (str):           Method to infer prediciton regime ('PCA' or 'knn').
+        n_components (int, None):     Number of components for PCA. If None, PCA is not performed.
+        n_neighbors  (int, 5):        Number of nearest neighbors to consider.
+
+    Returns:
+        numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
+    """
+    if method == 'PCA':
+        if n_components is not None:
+            pca = PCA(n_components=n_components)
+            r_embeddings = pca.fit_transform(r_embeddings)
+            t_embeddings = pca.transform(t_embeddings)
+
+        # Generate convex hull with reduced data (using Delaunay approach)
+        hull = Delaunay(r_embeddings)
+
+        # Check if the points are inside the convex hull
+        simplex_indices = hull.find_simplex(t_embeddings)
+
+        # Convert to boolean: True for interpolation, False for extrapolation
+        return simplex_indices == -1
+    elif method == 'knn':
+        # Fit a nearest neighbors model on training embeddings
+        nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='auto').fit(r_embeddings)
+
+        # Find distances to the k nearest neighbors for each test point
+        distances, _ = nbrs.kneighbors(t_embeddings)
+
+        # Use mean distance as OOD score
+        scores = distances.mean(axis=1)
+
+        # Mark the top 5% farthest points as OOD (similar to comparing to the mean of the Gaussian distribution)
+        threshold = np.percentile(scores, 90)
+        return scores < threshold
+    else:
+        raise ValueError(f'Unsupported extrapolation method: {method}')
+    return are_extrapolated
 
 def extract_embeddings(
         dataset,
@@ -181,77 +229,6 @@ def extract_embeddings(
 
     # Concatenate all batch embeddings into a single array
     return np.concatenate(embeddings, axis=0)
-
-
-def is_interpolating(
-    r_embeddings,
-    t_embeddings,
-    n_components=None
-):
-    """Check if the target embeddings are in the interpolation regime. If n_components is not None,
-    it reduces dimensionality of embeddings to n_components dimensions.
-
-    Args:
-        r_embeddings (numpy.ndarray): Reference embeddings.
-        t_embeddings (numpy.ndarray): Target embeddings.
-        n_components (int, None):     Number of components for PCA. If None, PCA is not performed.
-
-    Returns:
-        numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
-    """
-    if n_components is not None:
-        pca = PCA(n_components=n_components)
-        r_embeddings = pca.fit_transform(r_embeddings)
-        t_embeddings = pca.transform(t_embeddings)
-
-    # Generate convex hull with reduced data (using Delaunay approach)
-    hull = Delaunay(r_embeddings)
-
-    # Check if the points are inside the convex hull
-    simplex_indices = hull.find_simplex(t_embeddings)
-
-    # Convert to boolean: True for interpolation, False for extrapolation
-    are_interpolated = simplex_indices != -1
-    return are_interpolated
-
-
-def knn_ood_score(
-    r_embeddings,
-    t_embeddings,
-    n_neighbors=5
-):
-    """
-    Compute an OOD score for test points based on k-NN distance to training points.
-
-    Parameters
-    ----------
-    train_embeddings : np.ndarray, shape (n_train, d)
-        Latent representations of the training set.
-    test_embeddings : np.ndarray, shape (n_test, d)
-        Latent representations of the test set.
-    k : int
-        Number of nearest neighbors to consider.
-
-    Returns
-    -------
-    ood_scores : np.ndarray, shape (n_test,)
-        Mean distance to k nearest neighbors in the training set.
-        Larger values = more likely OOD.
-    """
-    # Fit nearest neighbors model on training embeddings
-    nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='auto').fit(r_embeddings)
-    
-    # Find distances to the k nearest neighbors for each test point
-    distances, _ = nbrs.kneighbors(t_embeddings)
-    
-    # Use mean distance as OOD score
-    scores = distances.mean(axis=1)
-    
-    threshold = np.percentile(scores, 90)  # mark top 5% farthest points as OOD
-    # which is in fact similar to comparing to the mean (Gaussian distribution)
-    ood_flags = scores < threshold
-    return ood_flags
-
 
 class GCNN_Fv(
     torch.nn.Module
