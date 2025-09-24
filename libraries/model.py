@@ -50,8 +50,7 @@ def analyze_uncertainty(
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    #t_interpolations = is_interpolating(r_embeddings, t_embeddings, n_components=5)
-    t_interpolations = knn_ood_score(r_embeddings, t_embeddings)
+    t_interpolations = estimate_extrapolations(r_embeddings, t_embeddings, method='PCA', n_components=None)  # or 'knn'
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
@@ -130,29 +129,30 @@ def estimate_uncertainty(
     ref_knn_means = np.mean(ref_knn_dists, axis=1)
     
     # Normalization factor based on percentile of reference mean distances
-    norm_factor = np.percentile(ref_knn_means, 85)
+    norm_factor = np.percentile(ref_knn_means, 90)
+    #norm_factor = np.mean(ref_knn_dists)
 
     # Mean k-NN distances for target set
     tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
     tgt_knn_means = np.mean(tgt_knn_dists, axis=1)  # average distance to k nearest neighbors
 
     # Normalized novelty
-    novelty = tgt_knn_means / norm_factor
+    novelty = np.sqrt(tgt_knn_means / norm_factor)
     
     # Apply novelty scaling
-    t_uncertainties *= (1.0 + novelty)
+    #t_uncertainties *= (1.0 + novelty)
     t_uncertainties = np.abs(t_uncertainties)
 
     # First neighbors list
-    closest_indices = indices[:, 0]
+    #closest_indices = indices[:, 0]
 
     # Update uncertainties for extrapolated points
     # it has to be that of the maximum when in absolute (but value not in absolute)
-    extrapolated_mask = ~t_interpolations
-    t_uncertainties[extrapolated_mask] = np.maximum(
-        t_uncertainties[extrapolated_mask],
-        np.abs(r_uncertainties[closest_indices[extrapolated_mask]])
-    )
+    #extrapolated_mask = ~t_interpolations
+    #t_uncertainties[extrapolated_mask] = np.maximum(
+    #    t_uncertainties[extrapolated_mask],
+    #    np.abs(r_uncertainties[closest_indices[extrapolated_mask]])
+    #)
 
     return t_uncertainties
 
@@ -253,7 +253,7 @@ def knn_ood_score(
     return ood_flags
 
 
-class GCNN(
+class GCNN_Fv(
     torch.nn.Module
 ):
     """Graph convolution neural network.
@@ -326,7 +326,7 @@ class GCNN(
         return x
 
 
-class GCNN2(
+class GCNN(
     torch.nn.Module
 ):
     """Graph convolution neural network.
