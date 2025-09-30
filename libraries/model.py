@@ -48,7 +48,7 @@ def analyze_uncertainty(
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    t_interpolations = estimate_extrapolation(r_embeddings, t_embeddings, method='PCA', n_components=None)  # or 'knn'
+    t_interpolations = estimate_interpolation(r_embeddings, t_embeddings, method='ConvexHull', n_components=None)
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
@@ -153,14 +153,14 @@ def estimate_uncertainty(
 
     return t_uncertainties
 
-def estimate_extrapolation(
+def estimate_interpolation(
     r_embeddings,
     t_embeddings,
-    method='PCA',
+    method='ConvexHull',
     n_components=None,
     n_neighbors=5
 ):
-    """Check if the target embeddings are in the extrapolation regime. If n_components is not None,
+    """Check if the target embeddings are in the interpolation regime. If n_components is not None,
     it reduces dimensionality of embeddings to n_components dimensions.
 
     Args:
@@ -173,7 +173,7 @@ def estimate_extrapolation(
     Returns:
         numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
     """
-    if method == 'PCA':
+    if method == 'ConvexHull':
         if n_components is not None:
             pca = PCA(n_components=n_components)
             r_embeddings = pca.fit_transform(r_embeddings)
@@ -183,11 +183,11 @@ def estimate_extrapolation(
         hull = Delaunay(r_embeddings)
 
         # Check if the points are inside the convex hull
-        simplex_indices = hull.find_simplex(t_embeddings)
+        simplex_indices = hull.find_simplex(t_embeddings, tol=1e-2)
 
         # Convert to boolean: True for interpolation, False for extrapolation
-        return simplex_indices == -1
-    elif method == 'knn':
+        return simplex_indices != -1
+    elif method == 'kNN':
         # Fit a nearest neighbors model on training embeddings
         nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='auto').fit(r_embeddings)
 
@@ -230,7 +230,7 @@ def extract_embeddings(
     # Concatenate all batch embeddings into a single array
     return np.concatenate(embeddings, axis=0)
 
-class GCNN_Fv(
+class GCNN(
     torch.nn.Module
 ):
     """Graph convolution neural network.
@@ -303,7 +303,7 @@ class GCNN_Fv(
         return x
 
 
-class GCNN(
+class GCNN_Eg(
     torch.nn.Module
 ):
     """Graph convolution neural network.
