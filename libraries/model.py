@@ -230,7 +230,7 @@ def extract_embeddings(
     # Concatenate all batch embeddings into a single array
     return np.concatenate(embeddings, axis=0)
 
-class GCNN(
+class GCNN_Fv(
     torch.nn.Module
 ):
     """Graph convolution neural network.
@@ -303,7 +303,7 @@ class GCNN(
         return x
 
 
-class GCNN_Eg(
+class GCNN(
     torch.nn.Module
 ):
     """Graph convolution neural network.

@@ -86,8 +86,11 @@ def generate_dataset(
                 # Append to dataset and labels
                 dataset.append(graph)
 
-    
     torch.save(dataset, f'{data_folder}/dataset.pt')
+    
+    dataset_std, std_parameters = standardize_dataset(dataset)
+    torch.save(dataset_std, f'{data_folder}/dataset_std.pt')
+    save_json(std_parameters, f'{data_folder}/standardized_parameters.json')
 
 
 def standardize_dataset(
@@ -170,7 +173,7 @@ def standardize_dataset(
         for data in dataset_std:
             data.x[:, feat_index] = (data.x[:, feat_index] - temp_feat_mean) * scale / temp_feat_std
         
-        # Append corresponing values for saving
+        # Append corresponding values for saving
         feat_mean[feat_index] = temp_feat_mean
         feat_std[feat_index]  = temp_feat_std
 

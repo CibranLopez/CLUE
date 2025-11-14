@@ -114,6 +114,10 @@ def get_sphere_images_tessellation(
                             # Append this point as a edge connection to particle 0
                             edges.append([index_0, index_i])
                             attributes.append([new_distance])
+                            
+                            if not same_index_condition:
+                                edges.append([index_i, index_0])
+                                attributes.append([new_distance])
 
                         # Change direction or update i,j if the box is far
                         elif new_distance > reference_distance_k:
