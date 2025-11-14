@@ -48,7 +48,7 @@ def analyze_uncertainty(
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    t_interpolations = estimate_interpolation(r_embeddings, t_embeddings, method='ConvexHull', n_components=None)
+    t_interpolations = estimate_interpolation(r_embeddings, t_embeddings, method='kNN', n_components=None)
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
@@ -230,7 +230,7 @@ def extract_embeddings(
     # Concatenate all batch embeddings into a single array
     return np.concatenate(embeddings, axis=0)
 
-class GCNN_Fv(
+class GCNN(
     torch.nn.Module
 ):
     """Graph convolution neural network.
@@ -284,8 +284,6 @@ class GCNN_Fv(
         
         # Apply global mean pooling to reduce dimensionality
         x = global_mean_pool(x, batch.batch)  # [batch_size, hidden_channels]
-        if return_graph_embedding:
-            return x
 
         # Apply dropout regularization
         x = F.dropout(x, p=self.pdropout, training=self.training)
@@ -294,77 +292,12 @@ class GCNN_Fv(
         x = self.linconv1(x)
         x = x.relu()
         x = self.linconv2(x)
+        if return_graph_embedding:
+            return x
         x = x.relu()
         
         ## REGRESSION
         
-        # Apply final linear layer to make prediction
-        x = self.lin(x)
-        return x
-
-
-class GCNN(
-    torch.nn.Module
-):
-    """Graph convolution neural network.
-    """
-    
-    def __init__(
-            self,
-            features_channels,
-            pdropout
-    ):
-        """Initializes the Graph Convolutional Neural Network.
-
-        Args:
-            features_channels (int):   Number of input features.
-            pdropout          (float): Dropout probability for regularization.
-
-        Returns:
-            None
-        """
-        
-        super(GCNN, self).__init__()
-        
-        # Set random seed for reproducibility
-        torch.manual_seed(12345)
-        
-        # Define graph convolution layers
-        self.conv1 = GraphConv(features_channels, 32)
-        self.conv2 = GraphConv(32, 32)
-
-        # Define linear layers
-        self.lin1 = Linear(32, 16)
-        self.lin2 = Linear(16, 8)
-        self.lin  = Linear(8, 1)
-        
-        self.pdropout = pdropout
-
-    def forward(
-            self,
-            batch,
-            return_graph_embedding=False
-    ):
-        # Apply graph convolution with ReLU activation function
-        x = self.conv1(batch.x, batch.edge_index, batch.edge_attr)
-        x = x.relu()
-        x = self.conv2(x, batch.edge_index, batch.edge_attr)
-        x = x.relu()
-
-        # Apply global mean pooling to reduce dimensionality
-        x = global_mean_pool(x, batch.batch)  # [batch_size, hidden_channels]
-
-        # Apply dropout regularization
-        x = F.dropout(x, p=self.pdropout, training=self.training)
-
-        # Apply linear convolution with ReLU activation function
-        x = self.lin1(x)
-        x = x.relu()
-        x = self.lin2(x)
-        if return_graph_embedding:
-            return x
-        x = x.relu()
-
         # Apply final linear layer to make prediction
         x = self.lin(x)
         return x
