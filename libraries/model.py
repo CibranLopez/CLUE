@@ -40,22 +40,17 @@ def analyze_uncertainty(
     # Create a DataLoader for the target dataset
     t_embeddings = extract_embeddings(t_dataset, model)
 
-    # It fails with illdefined spaces, thus with ReLU activation function as well
-    #r_embeddings[r_embeddings<0] *= 1e-8
-    #t_embeddings[t_embeddings<0] *= 1e-8
-
     # Extract labels from r_dataset
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    t_interpolations = estimate_interpolation(r_embeddings, t_embeddings, method='kNN', n_components=None)
+    t_novelty = estimate_novelty(r_embeddings, t_embeddings, method='kNN', n_components=5)
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
                                            r_uncertainty_data,
-                                           t_embeddings,
-                                           t_interpolations)
-    return t_uncertainties, t_interpolations
+                                           t_embeddings)
+    return t_uncertainties, t_novelty
 
 
 def estimate_uncertainty(
@@ -63,9 +58,8 @@ def estimate_uncertainty(
     r_labels,
     r_uncertainty_data,
     t_embeddings,
-    t_interpolations,
     interpolating_method='RBF',
-    novelty_k=None
+    n_neighbors=5
 ):
     """Estimate the uncertainty of the target dataset by interpolation,
     scaling it by (1 + novelty) where novelty is the average kNN distance.
@@ -78,22 +72,14 @@ def estimate_uncertainty(
         r_labels             (list):          Reference labels.
         r_uncertainty_data   (dict):          Uncertainty data for the reference dataset.
         t_embeddings         (numpy.ndarray): Target embeddings.
-        t_interpolations     (numpy.ndarray): Boolean array indicating if the target embeddings are interpolated.
         interpolating_method (str):           Interpolation method ('RBF' or 'spline').
-        novelty_k            (int):           Number of neighbors for novelty estimation.
+        n_neighbors          (int, 5):        Number of nearest neighbors to consider.
 
     Returns:
         numpy.ndarray: Uncertainties of the target dataset.
     """
-    # Get adaptative k-NN in case it is not provided
-    #novelty_k = min(5, len(r_embeddings)//10) if novelty_k is None else novelty_k
-    novelty_k = 5
-    
     # Extract uncertainties for each reference example
     r_uncertainties = np.asarray([r_uncertainty_data[label] for label in r_labels])
-
-    # Compute novelty using kNN distance
-    nbrs = NearestNeighbors(n_neighbors=novelty_k, algorithm="auto").fit(r_embeddings)
 
     if interpolating_method in ['RBF', 'spline']:
         if interpolating_method == 'RBF':
@@ -103,8 +89,12 @@ def estimate_uncertainty(
 
         # Interpolate uncertainties for the target dataset
         t_uncertainties = interpolator(t_embeddings)
+        return t_uncertainties
 
     elif interpolating_method == 'kNN':
+        # Compute novelty using kNN distance
+        nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm="auto").fit(r_embeddings)
+        
         # k-NN weighted uncertainty
         tgt_dists, tgt_indices = nbrs.kneighbors(t_embeddings)
 
@@ -118,45 +108,15 @@ def estimate_uncertainty(
 
         # Weighted mean of uncertainties
         t_uncertainties = np.sum(weights * r_uncertainties[tgt_indices], axis=1)
+        return t_uncertainties
 
     else:
         raise ValueError(f"Unsupported interpolation method: {interpolating_method}")
 
-    # Mean k-NN distances for reference set
-    ref_knn_dists, _ = nbrs.kneighbors(r_embeddings)
-    ref_knn_means = np.mean(ref_knn_dists, axis=1)
-    
-    # Normalization factor based on percentile of reference mean distances
-    norm_factor = np.percentile(ref_knn_means, 90)
-
-    # Mean k-NN distances for target set
-    tgt_knn_dists, indices = nbrs.kneighbors(t_embeddings)
-    tgt_knn_means = np.mean(tgt_knn_dists, axis=1)  # average distance to k nearest neighbors
-
-    # Normalized novelty
-    novelty = np.sqrt(tgt_knn_means / norm_factor)
-    
-    # Apply novelty scaling
-    #t_uncertainties *= (1.0 + novelty)
-    t_uncertainties = np.abs(t_uncertainties)
-
-    # First neighbors list
-    #closest_indices = indices[:, 0]
-
-    # Update uncertainties for extrapolated points
-    # it has to be that of the maximum when in absolute (but value not in absolute)
-    #extrapolated_mask = ~t_interpolations
-    #t_uncertainties[extrapolated_mask] = np.maximum(
-    #    t_uncertainties[extrapolated_mask],
-    #    np.abs(r_uncertainties[closest_indices[extrapolated_mask]])
-    #)
-
-    return t_uncertainties
-
-def estimate_interpolation(
+def estimate_novelty(
     r_embeddings,
     t_embeddings,
-    method='ConvexHull',
+    method='kNN',
     n_components=None,
     n_neighbors=5
 ):
@@ -187,22 +147,28 @@ def estimate_interpolation(
 
         # Convert to boolean: True for interpolation, False for extrapolation
         return simplex_indices != -1
+    
     elif method == 'kNN':
-        # Fit a nearest neighbors model on training embeddings
-        nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='auto').fit(r_embeddings)
-
-        # Find distances to the k nearest neighbors for each test point
-        distances, _ = nbrs.kneighbors(t_embeddings)
-
-        # Use mean distance as OOD score
-        scores = distances.mean(axis=1)
-
-        # Mark the top 5% farthest points as OOD (similar to comparing to the mean of the Gaussian distribution)
-        threshold = np.percentile(scores, 90)
-        return scores < threshold
+        # Compute novelty using kNN distance
+        nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm="auto").fit(r_embeddings)
+    
+        # Mean k-NN distances for reference set
+        ref_knn_dists, _ = nbrs.kneighbors(r_embeddings)
+        ref_knn_means = np.mean(ref_knn_dists, axis=1)
+        
+        # Normalization factor based on percentile of reference mean distances
+        norm_factor = np.percentile(ref_knn_means, 90)
+    
+        # Mean k-NN distances for target set
+        tgt_knn_dists, _ = nbrs.kneighbors(t_embeddings)
+        tgt_knn_means = np.mean(tgt_knn_dists, axis=1)  # average distance to k nearest neighbors
+    
+        # Normalized novelty
+        novelty = np.sqrt(tgt_knn_means / norm_factor)
+        return novelty
+    
     else:
         raise ValueError(f'Unsupported extrapolation method: {method}')
-    return are_extrapolated
 
 def extract_embeddings(
         dataset,
@@ -444,7 +410,7 @@ def forward_predictions(
 
     predictions    = []
     uncertainties  = []
-    interpolations = []
+    novelties      = []
     with torch.no_grad():  # No gradients for prediction
         for data in dataset:
             # Moving data to device
@@ -454,19 +420,20 @@ def forward_predictions(
             pred = model(data).flatten().detach().cpu().numpy()
 
             # Estimate uncertainty
-            uncert, interp = analyze_uncertainty(reference_dataset,
-                                                 data.to_data_list(), model, reference_uncertainty_data['uncertainty_values'])
+            uncert, novelt = analyze_uncertainty(reference_dataset,
+                                                 data.to_data_list(),
+                                                 model, reference_uncertainty_data['uncertainty_values'])
 
             # Append predictions to lists
             predictions.append(pred)
             uncertainties.append(uncert)
-            interpolations.append(interp)
+            novelties.append(novelt)
 
     # Concatenate predictions and ground truths into single arrays
-    predictions    = np.concatenate(predictions)   * target_std / target_scale + target_mean  # De-standardize predictions
-    uncertainties  = np.concatenate(uncertainties) * uncert_std / uncert_scale + uncert_mean  # De-standardize predictions
-    interpolations = np.concatenate(interpolations)
-    return predictions, uncertainties, interpolations
+    predictions    = np.concatenate(predictions)   * target_std / target_scale + target_mean
+    uncertainties  = np.concatenate(uncertainties) * uncert_std / uncert_scale + uncert_mean
+    novelties      = np.concatenate(novelties)
+    return predictions, uncertainties, novelties
 
 
 class EarlyStopping():
