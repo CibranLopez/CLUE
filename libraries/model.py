@@ -511,12 +511,12 @@ def load_model(
     # Load Graph Neural Network model
     model = GCNN(features_channels=n_node_features, pdropout=pdropout)
 
-    # Moving model to device
-    model = model.to(device)
-
     if model_name is not None and os.path.exists(model_name):
         # Load Graph Neural Network model
-        model.load_state_dict(torch.load(model_name, map_location=torch.device(device)))
+        model.load_state_dict(torch.load(model_name, map_location="cpu"))
+    
+    # Moving model to device
+    model = model.to(device)
 
     if mode == 'eval':
         model.eval()
