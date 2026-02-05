@@ -10,7 +10,7 @@ from torch_geometric.loader import DataLoader
 from torch.nn               import Linear
 from torch_geometric.nn     import GraphConv, global_mean_pool
 from sklearn.decomposition  import PCA
-from sklearn.neighbors      import NearestNeighbors
+from sklearn.neighbors      import NearestNeighbors, LocalOutlierFactor
 
 # Checking if pytorch can run in GPU, else CPU
 device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
@@ -19,7 +19,9 @@ def analyze_uncertainty(
         r_dataset,
         t_dataset,
         model,
-        r_uncertainty_data
+        r_uncertainty_data,
+        novelty_method='kNN',
+        n_neighbors=5
 ):
     """Estimate uncertainty on predictions and whether the target dataset is in the interpolation regime.
 
@@ -28,10 +30,12 @@ def analyze_uncertainty(
         t_dataset          (list):            Target dataset, as a list of graphs in PyTorch Geometric's Data format.
         model              (torch.nn.Module): The trained model.
         r_uncertainty_data (dict):            Uncertainty data for the reference dataset.
+        novelty_method     (str):             Method for novelty estimation ('kNN' or 'LOF').
+        n_neighbors        (int):             Number of neighbors for novelty estimation.
 
     Returns:
         numpy.ndarray: Uncertainties of the target dataset.
-        numpy.ndarray: Boolean array indicating if the target embeddings
+        numpy.ndarray: Novelty scores of the target embeddings.
     """
 
     # Create a DataLoader for the reference dataset
@@ -44,10 +48,12 @@ def analyze_uncertainty(
     r_labels = [data.label for data in r_dataset]
 
     # Determine which points are in the interpolation/extrapolation regime
-    t_novelty = estimate_novelty(r_embeddings, t_embeddings, method='kNN', n_components=5)
+    t_novelty = estimate_novelty(r_embeddings, t_embeddings, method=novelty_method, n_neighbors=n_neighbors)
 
     # Determine the uncertainty on the predictions
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
+                                           r_uncertainty_data,
+                                           t_embeddings)
                                            r_uncertainty_data,
                                            t_embeddings)
     return t_uncertainties, t_novelty
@@ -126,12 +132,12 @@ def estimate_novelty(
     Args:
         r_embeddings (numpy.ndarray): Reference embeddings.
         t_embeddings (numpy.ndarray): Target embeddings.
-        method       (str):           Method to infer prediciton regime ('PCA' or 'knn').
+        method       (str):           Method to infer prediction regime ('ConvexHull', 'kNN', or 'LOF').
         n_components (int, None):     Number of components for PCA. If None, PCA is not performed.
         n_neighbors  (int, 5):        Number of nearest neighbors to consider.
 
     Returns:
-        numpy.ndarray: Boolean array indicating if the target embeddings are interpolated.
+        numpy.ndarray: Novelty scores (higher means more novel/extrapolated).
     """
     if method == 'ConvexHull':
         if n_components is not None:
@@ -165,6 +171,22 @@ def estimate_novelty(
     
         # Normalized novelty
         novelty = np.sqrt(tgt_knn_means / norm_factor)
+        return novelty
+    
+    elif method == 'LOF':
+        # Use Local Outlier Factor for density-based novelty detection
+        # LOF accounts for relative density, more robust than raw k-NN distances
+        lof = LocalOutlierFactor(n_neighbors=n_neighbors, novelty=True, contamination='auto')
+        lof.fit(r_embeddings)
+        
+        # Negative scores: more negative = more novel (outlier)
+        # Score of ~-1 means typical density, << -1 means outlier
+        lof_scores = lof.score_samples(t_embeddings)
+        
+        # Convert to novelty metric: 0 = typical density, higher = more novel
+        # Use exponential scaling to emphasize outliers
+        novelty = np.exp(-lof_scores - 1)  # -1 offset so score=-1 gives novelty=1
+        
         return novelty
     
     else:
@@ -380,7 +402,9 @@ def forward_predictions(
         pred_dataset,
         model,
         standardized_parameters,
-        reference_uncertainty_data
+        reference_uncertainty_data,
+        novelty_method='kNN',
+        n_neighbors=5
 ):
     """Make predictions on a dataset using a trained model.
 
@@ -390,8 +414,12 @@ def forward_predictions(
         model             (torch.nn.Module): The trained model.
         standardized_parameters (dict):      Standardized parameters for rescaling the predictions.
         reference_uncertainty_data (dict):   Uncertainty data for the reference dataset.
+        novelty_method    (str):             Method for novelty estimation ('kNN' or 'LOF').
+        n_neighbors       (int):             Number of neighbors for novelty estimation.
     Returns:
         numpy.ndarray: Predicted values.
+        numpy.ndarray: Uncertainties.
+        numpy.ndarray: Novelty scores.
     """
     model.eval()
     
@@ -422,7 +450,10 @@ def forward_predictions(
             # Estimate uncertainty
             uncert, novelt = analyze_uncertainty(reference_dataset,
                                                  data.to_data_list(),
-                                                 model, reference_uncertainty_data['uncertainty_values'])
+                                                 model, 
+                                                 reference_uncertainty_data['uncertainty_values'],
+                                                 novelty_method=novelty_method,
+                                                 n_neighbors=n_neighbors)
 
             # Append predictions to lists
             predictions.append(pred)
@@ -498,7 +529,6 @@ class EarlyStopping():
         if val_loss < self.val_loss_min:
             torch.save(model.module.state_dict(), self.model_name)
             self.val_loss_min = val_loss
-            self.val_loss_min = np.inf
 
 
 def load_model(

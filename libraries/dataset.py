@@ -225,16 +225,20 @@ def standardize_dataset_from_keys(
         for data in dataset:
             data.edge_attr = 1 / data.edge_attr.pow(2)
 
+    target_factor = target_std / scale
+    edge_factor   = edge_std / scale
+    feat_factor   = feat_std / scale
+
     for data in dataset:
-        data.edge_attr = (data.edge_attr - edge_mean) * scale / edge_std
+        data.edge_attr = (data.edge_attr - edge_mean) / edge_factor
 
     for target_index in range(n_y):
         for data in dataset:
-            data.y[target_index] = (data.y[target_index] - target_mean[target_index]) * scale / target_std[target_index]
+            data.y[target_index] = (data.y[target_index] - target_mean[target_index]) / target_factor[target_index]
 
     for feat_index in range(n_features):
         for data in dataset:
-            data.x[:, feat_index] = (data.x[:, feat_index] - feat_mean[feat_index]) * scale / feat_std[feat_index]
+            data.x[:, feat_index] = (data.x[:, feat_index] - feat_mean[feat_index]) / feat_factor[feat_index]
     return dataset
 
 
