@@ -84,8 +84,7 @@ def get_all_linked_tessellation(
 
 def get_voronoi_tessellation(
         atomic_data,
-        temp_structure,
-        periodicity
+        temp_structure
 ):
     """
     Get the Voronoi nodes of a structure.
@@ -96,7 +95,6 @@ def get_voronoi_tessellation(
     Args:
         atomic_data    (dict):                      A dictionary with all node features.
         temp_structure (pymatgen Structure object): Structure from which the graph is to be generated.
-        periodicity    (bool):                      Whether to consider periodicity of the structure.
     """
     
     # Map all sites to the unit cell; 0 ≤ xyz < 1
@@ -109,8 +107,7 @@ def get_voronoi_tessellation(
     # Get all atom coords in a supercell of the structure because
     # Voronoi polyhedra can extend beyond the standard unit cell
     coords = []
-    if periodicity: cell_range = list(range(-1, 2))  # Periodicity
-    else:           cell_range = [0]  # No periodicity
+    cell_range = list(range(-1, 2))  # Periodicity
     for shift in itertools.product(cell_range, cell_range, cell_range):
         for site in prim_structure.sites:
             shifted = site.frac_coords + shift
@@ -122,9 +119,6 @@ def get_voronoi_tessellation(
     tol = 1e-6
     new_ridge_points = []
     for atoms in voro.ridge_points:  # Atoms are indexes referred to coords
-        # Dictionary for storing information about each atom
-        atoms_info = {}
-
         new_atoms = []
         # Check if any of those atoms belong to the unitcell
         for atom_idx in range(2):
@@ -236,6 +230,7 @@ def get_sphere_images_tessellation(
             charge            = atomic_data[site.species_string]['charge']
             electronegativity = atomic_data[site.species_string]['electronegativity']
             ionization_energy = atomic_data[site.species_string]['ionization_energy']
+            total_occupancy   = 1.0
         else:
             atomic_mass = sum(
                 solid_solution_data[site.species_string][ss_name] * atomic_data[ss_name]['atomic_mass']
@@ -249,12 +244,15 @@ def get_sphere_images_tessellation(
             ionization_energy = sum(
                 solid_solution_data[site.species_string][ss_name] * atomic_data[ss_name]['ionization_energy']
                 for ss_name in solid_solution_data[site.species_string].keys())
+            # Sum of occupancies: 1.0 for pure mixing, <1.0 when the site has vacancies
+            total_occupancy = sum(solid_solution_data[site.species_string].values())
 
-        # Adding the nodes (mass, charge, electronegativity and ionization energies)
+        # Adding the nodes (mass, charge, electronegativity, ionization energy, total occupancy)
         nodes.append([atomic_mass,
                       charge,
                       electronegativity,
-                      ionization_energy])
+                      ionization_energy,
+                      total_occupancy])
 
         for neighbor in neighbors[i]:
             j = neighbor.index
@@ -269,69 +267,34 @@ def get_sphere_images_tessellation(
                     attributes.append([distance])
     return nodes, edges, attributes
 
-def get_molecule_tessellation(
-        atomic_data,
-        smiles
-):
-    """Extracts graph information from SMILES codification of a molecule.
-
-    Args:
-        atomic_data (dict): A dictionary with all node features.
-        smiles      (str): SMILES string codifying a molecule.
-
-    Returns:
-        nodes      (list): A tensor containing node attributes.
-        edges      (list): A tensor containing edge indices.
-        attributes (list): A tensor containing edge attributes (distances).
-    """
-
-    # Generate the molecule from the SMILES string
-    mol = Chem.MolFromSmiles(smiles)
-
-    # Get edge attributes (bond types)
-    edges      = []
-    attributes = []
-    for i in range(mol.GetNumAtoms()):
-        for j in range(i+1, mol.GetNumAtoms()):
-            bond = mol.GetBondBetweenAtoms(i, j)
-            if bond is not None:
-                bond_type = bond.GetBondTypeAsDouble()
-                edges.append([i, j])
-                attributes.append(bond_type)
-
-    # Generate node features
-    nodes = []
-    for atom in mol.GetAtoms():
-        species_name = atom.GetSymbol()
-        nodes.append([atomic_data[species_name]['atomic_mass'],
-                      atomic_data[species_name]['charge'],
-                      atomic_data[species_name]['electronegativity'],
-                      atomic_data[species_name]['ionization_energy']])
-    return nodes, edges, attributes
-
-
-def graph_POSCAR_encoding(
-        structure,
+def graph_structure_encoding(
+        structure_path,
         encoding_type='sphere-images',
-        distance_threshold=6,
-        periodicity=True
+        distance_threshold=6
 ):
-    """Generates a graph parameters from a POSCAR.
-    There are the following implementations:
-        1. Voronoi tessellation.
-        2. All particles inside a sphere of radius distance_threshold.
-        3. Filled space given a cubic box of dimension [0-Lx, 0-Ly, 0-Lz] considering all necessary images.
-           It links every particle with the rest for the given set of nodes and edges.
+    """Generates graph parameters from a crystal structure.
+
+    Accepts either a file path (POSCAR, CIF, or any format supported by
+    pymatgen's ``Structure.from_file``) or an already-loaded pymatgen
+    ``Structure`` object.
+
+    Encoding types:
+        1. ``'sphere-images'`` – neighbors within a sphere of ``distance_threshold``.
+        2. ``'voronoi'``       – Voronoi tessellation.
+        3. ``'all-linked'``    – all pairwise connections in the unit cell.
+        4. ``'molecule'``      – bond graph from a SMILES string (pass SMILES as ``structure``).
 
     Args:
-        structure          (pymatgen Structure object): Structure from which the graph is to be generated.
-        encoding_type      (str):    Framework used for encoding the structure.
-        distance_threshold (float):  Distance threshold for sphere-images tessellation.
-        periodicity        (bool):   Whether or not to consider periodicity of the structure.
+        structure_path     (str | pymatgen Structure): File path to a structure file,
+                                                      a pymatgen Structure object, or
+                                                      a SMILES string ('molecule' mode).
+        encoding_type      (str):   Tessellation method (default: 'sphere-images').
+        distance_threshold (float): Neighbor cutoff radius for 'sphere-images' (default: 6).
+
     Returns:
-        nodes      (torch tensor): Generated nodes with corresponding features.
-        edges      (torch tensor): Generated connections between nodes.
-        attributes (torch tensor): Corresponding weights of the generated connections.
+        nodes      (torch tensor): Node feature matrix.
+        edges      (torch tensor): Edge index tensor.
+        attributes (torch tensor): Edge attribute (distance/bond) tensor.
     """
 
     # Loading dictionary of atomic masses
@@ -346,27 +309,33 @@ def graph_POSCAR_encoding(
                 'ionization_energy': float(ionization_energy) if ionization_energy != 'None' else None
             }
 
+    structure = Structure.from_file(structure_path)
+
+    # For disordered structures (partial occupancies), build a solid_solution_data
+    # dict so the tessellation functions can compute weighted-average node features.
+    # Each key is the site's species_string; each value maps element symbol -> fraction.
+    solid_solution_data = None
+    if not structure.is_ordered:
+        solid_solution_data = {}
+        for site in structure.sites:
+            if site.species_string not in solid_solution_data:
+                solid_solution_data[site.species_string] = {
+                    str(el): float(occ) for el, occ in site.species.items()
+                }
+
     if encoding_type == 'voronoi':
-        # Get edges and attributes for the corresponding tessellation
         nodes, edges, attributes = get_voronoi_tessellation(atomic_data,
-                                                            structure,
-                                                            periodicity)
+                                                            structure)
 
     elif encoding_type == 'sphere-images':
-        # Get edges and attributes for the corresponding tessellation
         nodes, edges, attributes = get_sphere_images_tessellation(atomic_data,
                                                                   structure,
-                                                                  distance_threshold=distance_threshold)
+                                                                  distance_threshold=distance_threshold,
+                                                                  solid_solution_data=solid_solution_data)
 
     elif encoding_type == 'all-linked':
-        # Get edges and attributes for the corresponding tessellation
         nodes, edges, attributes = get_all_linked_tessellation(atomic_data,
                                                                structure)
-
-    elif encoding_type == 'molecule':
-        # Get edges and attributes for the corresponding tessellation
-        nodes, edges, attributes = get_molecule_tessellation(atomic_data,
-                                                             structure)
 
     else:
         sys.exit('Error: encoding type not available.')

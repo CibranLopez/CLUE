@@ -54,8 +54,6 @@ def analyze_uncertainty(
     t_uncertainties = estimate_uncertainty(r_embeddings, r_labels,
                                            r_uncertainty_data,
                                            t_embeddings)
-                                           r_uncertainty_data,
-                                           t_embeddings)
     return t_uncertainties, t_novelty
 
 
@@ -155,23 +153,14 @@ def estimate_novelty(
         return simplex_indices != -1
     
     elif method == 'kNN':
-        # Compute novelty using kNN distance
-        nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm="auto").fit(r_embeddings)
-    
-        # Mean k-NN distances for reference set
-        ref_knn_dists, _ = nbrs.kneighbors(r_embeddings)
-        ref_knn_means = np.mean(ref_knn_dists, axis=1)
-        
-        # Normalization factor based on percentile of reference mean distances
-        norm_factor = np.percentile(ref_knn_means, 90)
-    
-        # Mean k-NN distances for target set
-        tgt_knn_dists, _ = nbrs.kneighbors(t_embeddings)
-        tgt_knn_means = np.mean(tgt_knn_dists, axis=1)  # average distance to k nearest neighbors
-    
-        # Normalized novelty
-        novelty = np.sqrt(tgt_knn_means / norm_factor)
-        return novelty
+        nbrs = NearestNeighbors(n_neighbors=n_neighbors, algorithm='auto').fit(r_embeddings)
+
+        # Reference self-distances for normalisation
+        ref_dists, _ = nbrs.kneighbors(r_embeddings)
+        norm_factor  = np.percentile(ref_dists.mean(axis=1), 90)
+
+        tgt_dists, _ = nbrs.kneighbors(t_embeddings)
+        return np.sqrt(tgt_dists.mean(axis=1) / (norm_factor + 1e-12))
     
     elif method == 'LOF':
         # Use Local Outlier Factor for density-based novelty detection
@@ -207,13 +196,15 @@ def extract_embeddings(
     """
     # Create a DataLoader for the dataset
     loader = DataLoader(dataset, batch_size=128, shuffle=False)
-
+    model.eval()
+    
     # Process the reference dataset in batches using the DataLoader
     embeddings = []
-    for batch in loader:
-        batch = batch.to(device)
-        embedding = model(batch, return_graph_embedding=True).cpu().numpy()
-        embeddings.append(embedding)
+    with torch.no_grad():
+        for batch in loader:
+            batch = batch.to(device)
+            emb = model(batch, return_graph_embedding=True).cpu().numpy()
+            embeddings.append(emb)
 
     # Concatenate all batch embeddings into a single array
     return np.concatenate(embeddings, axis=0)

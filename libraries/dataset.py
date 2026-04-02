@@ -1,6 +1,7 @@
 import matplotlib.pyplot as plt
 import seaborn           as sns
 import numpy             as np
+import pandas            as pd
 import torch
 import json
 import os
@@ -63,7 +64,7 @@ def generate_dataset(
                 print(f'\t{polymorph}')
                 
                 try:
-                    nodes, edges, attributes = clg.graph_POSCAR_encoding(path_to_POSCAR)
+                    nodes, edges, attributes = clg.graph_structure_encoding(path_to_POSCAR)
                 except:
                     print(f'\tError: {material} {polymorph} not loaded')
                     continue
@@ -88,6 +89,145 @@ def generate_dataset(
 
     torch.save(dataset, f'{data_folder}/dataset.pt')
     
+    dataset_std, std_parameters = standardize_dataset(dataset)
+    torch.save(dataset_std, f'{data_folder}/dataset_std.pt')
+    save_json(std_parameters, f'{data_folder}/standardized_parameters.json')
+
+
+# Mapping from user-facing target names to the column names in data.xlsx
+_CIF_TARGET_COLUMNS = {
+    'ionic_conductivity': 'Ionic conductivity (S cm-1)',
+}
+
+# Optional per-target transformations applied after parsing the raw value.
+# Ionic conductivity spans ~16 orders of magnitude, so log10 is essential
+# for stable training (avoids the model collapsing to the mean).
+_CIF_TARGET_TRANSFORMS = {
+    'ionic_conductivity': np.log10,
+}
+
+# Graph-level feature columns read from data.xlsx.
+# These are broadcast to every node in the graph and appended to the node feature vector.
+_CIF_GRAPH_FEATURE_COLUMNS = ['Z', 'Space group #', 'a', 'b', 'c', 'alpha', 'beta', 'gamma']
+
+
+def _parse_conductivity(value):
+    """Convert a conductivity value from data.xlsx to float.
+    Handles string representations such as '<1E-10' by stripping the inequality
+    sign and converting the remainder to a float.
+
+    Args:
+        value: The raw cell value (float or str).
+
+    Returns:
+        float: The numeric conductivity value.
+    """
+    if isinstance(value, str):
+        value = value.lstrip('<>').strip()
+    return float(value)
+
+
+def generate_dataset_CIF(
+        data_path,
+        targets,
+        data_folder
+):
+    """Generates a dataset from CIF files and a data.xlsx spreadsheet.
+
+    The function expects ``data_path`` to contain:
+    - One or more ``.cif`` files whose filenames (without extension) match the
+      ``ID`` column in ``data.xlsx``.
+    - A ``data.xlsx`` file with at minimum an ``ID`` column and the target
+      column(s) corresponding to the requested ``targets``.
+
+    Supported target names:
+        - ``'ionic_conductivity'`` → ``'Ionic conductivity (S cm-1)'`` column.
+
+    Args:
+        data_path   (str):  Path to the folder containing CIF files and data.xlsx.
+        targets     (list): List of target property names to be predicted.
+                            Each name must be a key in ``_CIF_TARGET_COLUMNS``.
+        data_folder (str):  Path to the folder where the dataset will be saved.
+
+    Returns:
+        None
+    """
+    # Define basic dataset parameters for tracking data
+    dataset_parameters = {
+        'input_folder':  data_path,
+        'output_folder': data_folder,
+        'target':        targets
+    }
+
+    if not os.path.exists(data_folder):
+        os.makedirs(data_folder, exist_ok=True)
+
+    with open(f'{data_folder}/dataset_parameters.json', 'w') as json_file:
+        json.dump(dataset_parameters, json_file)
+
+    # ---------- Load the spreadsheet ----------
+    xlsx_path = os.path.join(data_path, 'data.xlsx')
+    df = pd.read_excel(xlsx_path)
+
+    # Resolve target columns and their optional transforms
+    target_columns    = []
+    target_transforms = []
+    for t in targets:
+        if t not in _CIF_TARGET_COLUMNS:
+            raise ValueError(
+                f"Unknown target '{t}'. "
+                f"Available targets: {list(_CIF_TARGET_COLUMNS.keys())}"
+            )
+        target_columns.append(_CIF_TARGET_COLUMNS[t])
+        target_transforms.append(_CIF_TARGET_TRANSFORMS.get(t, None))
+
+    # Build a mapping ID -> (target_values, global_feature_values)
+    # Only entries with a matching CIF file on disk are included.
+    id_to_data = {}
+    for _, row in df.iterrows():
+        material_id = str(row['ID'])
+        cif_path    = os.path.join(data_path, f'{material_id}.cif')
+        if not os.path.isfile(cif_path):
+            continue
+        try:
+            target_values = []
+            for col, transform in zip(target_columns, target_transforms):
+                val = _parse_conductivity(row[col])
+                if transform is not None:
+                    val = transform(val)
+                target_values.append(val)
+        except (ValueError, TypeError) as e:
+            print(f'\tSkipping {material_id}: could not parse target value ({e})')
+            continue
+        global_feature_values = [float(row[col]) for col in _CIF_GRAPH_FEATURE_COLUMNS]
+        id_to_data[material_id] = (target_values, global_feature_values)
+
+    # ---------- Build graphs ----------
+    dataset = []
+    for material_id, (target_values, global_feature_values) in id_to_data.items():
+        cif_path = os.path.join(data_path, f'{material_id}.cif')
+        print(material_id)
+        try:
+            nodes, edges, attributes = clg.graph_structure_encoding(cif_path)
+        except Exception as e:
+            print(f'\tError loading {material_id}: {e}')
+            continue
+
+        # Broadcast graph-level features to every node and append to the node feature vector
+        global_feat = torch.tensor(global_feature_values, dtype=torch.float)
+        nodes = torch.cat([nodes, global_feat.unsqueeze(0).expand(nodes.shape[0], -1)], dim=1)
+
+        graph = Data(
+            x=nodes,
+            edge_index=edges.t().contiguous(),
+            edge_attr=attributes.ravel(),
+            y=torch.tensor(target_values, dtype=torch.float),
+            label=material_id
+        )
+        dataset.append(graph)
+
+    torch.save(dataset, f'{data_folder}/dataset.pt')
+
     dataset_std, std_parameters = standardize_dataset(dataset)
     torch.save(dataset_std, f'{data_folder}/dataset_std.pt')
     save_json(std_parameters, f'{data_folder}/standardized_parameters.json')
