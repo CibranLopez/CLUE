@@ -236,13 +236,13 @@ class GCNN(
         torch.manual_seed(12345)
         
         # Define graph convolution layers
-        self.conv1 = GraphConv(features_channels, 512)
-        self.conv2 = GraphConv(512, 512)
+        self.conv1 = GraphConv(features_channels, 256)
+        self.conv2 = GraphConv(256, 256)
         
         # Define linear layers
-        self.linconv1 = Linear(512, 64)
-        self.linconv2 = Linear(64, 16)
-        self.lin      = Linear(16, 1)
+        self.linconv1 = Linear(256, 128)
+        self.linconv2 = Linear(128, 32)
+        self.lin      = Linear(32, 1)
         
         self.pdropout = pdropout
 
