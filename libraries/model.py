@@ -93,6 +93,14 @@ def estimate_uncertainty(
 
         # Interpolate uncertainties for the target dataset
         t_uncertainties = interpolator(t_embeddings)
+        # Clip to the 5th–95th percentile of reference uncertainties.
+        # Using the full [min, max] range allows the small number of extreme
+        # outliers (often >5σ) to dominate interpolated values for all novel
+        # targets. Percentile clipping keeps estimates in the bulk of the
+        # training distribution.
+        lo = np.percentile(r_uncertainties, 5)
+        hi = np.percentile(r_uncertainties, 95)
+        t_uncertainties = np.clip(t_uncertainties, lo, hi)
         return t_uncertainties
 
     elif interpolating_method == 'kNN':
@@ -236,13 +244,13 @@ class GCNN(
         torch.manual_seed(12345)
         
         # Define graph convolution layers
-        self.conv1 = GraphConv(features_channels, 256)
-        self.conv2 = GraphConv(256, 256)
+        self.conv1 = GraphConv(features_channels, 512)
+        self.conv2 = GraphConv(512, 512)
         
         # Define linear layers
-        self.linconv1 = Linear(256, 128)
-        self.linconv2 = Linear(128, 32)
-        self.lin      = Linear(32, 1)
+        self.linconv1 = Linear(512, 256)
+        self.linconv2 = Linear(256, 128)
+        self.lin      = Linear(128, 1)
         
         self.pdropout = pdropout
 
@@ -336,6 +344,7 @@ def train(
     
     # Concatenate predictions and ground truths into single arrays
     predictions   = np.concatenate(predictions)   * target_factor + target_mean
+    predictions[predictions < 0] = 0  # Ensure predictions are positive
     ground_truths = np.concatenate(ground_truths) * target_factor + target_mean
     return avg_train_loss, predictions, ground_truths
 
@@ -385,6 +394,7 @@ def test(
     # Concatenate predictions and ground truths into single arrays
     predictions   = np.concatenate(predictions)   * target_factor + target_mean
     ground_truths = np.concatenate(ground_truths) * target_factor + target_mean
+    predictions[predictions < 0] = 0  # Ensure predictions are positive
     return avg_test_loss, predictions, ground_truths
 
 
@@ -452,10 +462,76 @@ def forward_predictions(
             novelties.append(novelt)
 
     # Concatenate predictions and ground truths into single arrays
-    predictions    = np.concatenate(predictions)   * target_std / target_scale + target_mean
-    uncertainties  = np.concatenate(uncertainties) * uncert_std / uncert_scale + uncert_mean
-    novelties      = np.concatenate(novelties)
+    predictions   = np.concatenate(predictions)  * target_std / target_scale + target_mean
+    predictions[predictions < 0] = 0  # Ensure predictions are positive
+    uncertainties = np.concatenate(uncertainties) * uncert_std / uncert_scale + uncert_mean
+    uncertainties = np.maximum(uncertainties, 0.0)  # uncertainties are magnitudes — must be ≥ 0
+    novelties     = np.concatenate(novelties)
     return predictions, uncertainties, novelties
+
+
+def regenerate_uncertainty_data(
+        r_dataset_std,
+        model,
+        standardized_parameters,
+        uncertainty_data_path,
+        log10_space=True
+):
+    """Regenerate uncertainty_data.json from an existing trained model.
+
+    Useful for updating models that were saved with absolute-space errors
+    to the preferred log10-decade (scale-invariant) format.
+
+    Args:
+        r_dataset_std          (list):  Reference dataset (standardized).
+        model                  (torch.nn.Module): Trained model.
+        standardized_parameters (dict): Parameters for de-standardising predictions.
+        uncertainty_data_path  (str):   Path to write the updated JSON file.
+        log10_space            (bool):  If True (default), store |log10(gt/pred)| in decades;
+                                        if False, store absolute |gt - pred|.
+
+    Returns:
+        dict: The new uncertainty_data dictionary.
+    """
+    import json as _json
+
+    target_mean  = standardized_parameters['target_mean']
+    target_std   = standardized_parameters['target_std']
+    target_scale = standardized_parameters['scale']
+    target_factor = target_std / target_scale
+
+    criterion = torch.nn.MSELoss()
+    loader    = DataLoader(r_dataset_std, batch_size=128, shuffle=False, pin_memory=True)
+    _, predictions, ground_truths = test(model, criterion, loader, target_factor, target_mean)
+
+    if log10_space:
+        uncertainties = np.clip(
+            np.abs(np.log10(np.maximum(ground_truths, 1e-100))
+                 - np.log10(np.maximum(predictions,  1e-100))),
+            0.0, 10.0          # cap at 10 decades to prevent a handful of outliers
+        )                      # from inflating uncert_std and dominating interpolation
+    else:
+        uncertainties = np.abs(ground_truths - predictions)
+
+    uncert_mean  = float(uncertainties.mean())
+    uncert_std   = float(uncertainties.std())
+    uncert_scale = 1
+    uncertainties_std = (uncertainties - uncert_mean) / uncert_std
+
+    uncertainty_values = {
+        data.label: float(uncertainties_std[idx])
+        for idx, data in enumerate(r_dataset_std)
+    }
+    uncertainty_data = {
+        'uncertainty_values': uncertainty_values,
+        'uncert_mean':        uncert_mean,
+        'uncert_std':         uncert_std,
+        'uncert_scale':       uncert_scale,
+        'log10_space':        log10_space,
+    }
+    with open(uncertainty_data_path, 'w') as fh:
+        _json.dump(uncertainty_data, fh, indent=2)
+    return uncertainty_data
 
 
 class EarlyStopping():

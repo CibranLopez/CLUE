@@ -99,13 +99,6 @@ _CIF_TARGET_COLUMNS = {
     'ionic_conductivity': 'Ionic conductivity (S cm-1)',
 }
 
-# Optional per-target transformations applied after parsing the raw value.
-# Ionic conductivity spans ~16 orders of magnitude, so log10 is essential
-# for stable training (avoids the model collapsing to the mean).
-_CIF_TARGET_TRANSFORMS = {
-    'ionic_conductivity': np.log10,
-}
-
 # Graph-level feature columns read from data.xlsx.
 # These are broadcast to every node in the graph and appended to the node feature vector.
 _CIF_GRAPH_FEATURE_COLUMNS = ['Z', 'Space group #', 'a', 'b', 'c', 'alpha', 'beta', 'gamma']
@@ -170,8 +163,7 @@ def generate_dataset_CIF(
     df = pd.read_excel(xlsx_path)
 
     # Resolve target columns and their optional transforms
-    target_columns    = []
-    target_transforms = []
+    target_columns = []
     for t in targets:
         if t not in _CIF_TARGET_COLUMNS:
             raise ValueError(
@@ -179,7 +171,6 @@ def generate_dataset_CIF(
                 f"Available targets: {list(_CIF_TARGET_COLUMNS.keys())}"
             )
         target_columns.append(_CIF_TARGET_COLUMNS[t])
-        target_transforms.append(_CIF_TARGET_TRANSFORMS.get(t, None))
 
     # Build a mapping ID -> (target_values, global_feature_values)
     # Only entries with a matching CIF file on disk are included.
@@ -191,10 +182,8 @@ def generate_dataset_CIF(
             continue
         try:
             target_values = []
-            for col, transform in zip(target_columns, target_transforms):
+            for col in target_columns:
                 val = _parse_conductivity(row[col])
-                if transform is not None:
-                    val = transform(val)
                 target_values.append(val)
         except (ValueError, TypeError) as e:
             print(f'\tSkipping {material_id}: could not parse target value ({e})')
