@@ -64,7 +64,7 @@ def generate_dataset(
                 print(f'\t{polymorph}')
                 
                 try:
-                    nodes, edges, attributes = clg.graph_structure_encoding(path_to_POSCAR)
+                    nodes, edges, attributes = clg.graph_structure_encoding(f'{path_to_POSCAR}/POSCAR')
                 except:
                     print(f'\tError: {material} {polymorph} not loaded')
                     continue
@@ -251,37 +251,42 @@ def standardize_dataset(
 
     # Number of graphs
     n_graphs = len(dataset_std)
-    
+
     # Number of features per node
     n_features = dataset_std[0].num_node_features
     
     # Number of features per graph
     n_y = dataset_std[0].y.shape[0]
-    
+
     # Check if non-linear standardization
     if transformation == 'inverse-quadratic':
         for data in dataset_std:
             data.edge_attr = 1 / data.edge_attr.pow(2)
 
+    epsilon = 1e-8
+
     # Compute means
     target_mean = torch.zeros(n_y)
     for target_index in range(n_y):
         target_mean[target_index] = sum([data.y[target_index] for data in dataset_std]) / n_graphs
-    
+
     edge_mean = sum([data.edge_attr.mean() for data in dataset_std]) / n_graphs
-    
+
     # Compute standard deviations
     target_std = torch.zeros(n_y)
     for target_index in range(n_y):
-        target_std[target_index] = torch.sqrt(sum([(data.y[target_index] - target_mean[target_index]).pow(2).sum() for data in dataset_std]) / (n_graphs * (n_graphs - 1)))
-    
-    edge_std = torch.sqrt(sum([(data.edge_attr - edge_mean).pow(2).sum() for data in dataset_std]) / (n_graphs * (n_graphs - 1)))
-    
+        var = sum([(data.y[target_index] - target_mean[target_index]).pow(2).sum() for data in dataset_std]) / (n_graphs * (n_graphs - 1))
+        target_std[target_index] = torch.sqrt(var) if var > epsilon else torch.tensor(epsilon)
+
+    edge_var = sum([(data.edge_attr - edge_mean).pow(2).sum() for data in dataset_std]) / (n_graphs * (n_graphs - 1))
+    edge_std = torch.sqrt(edge_var) if edge_var > epsilon else torch.tensor(epsilon)
+
     # In case we want to increase the values of the normalization
     scale = torch.tensor(1e0)
 
     target_factor = target_std / scale
-    edge_factor   = edge_std   / scale
+    target_factor[target_factor == 0] = epsilon
+    edge_factor   = edge_std / scale if edge_std != 0 else epsilon
 
     # Update normalized values into the database
     for data in dataset_std:
@@ -294,10 +299,9 @@ def standardize_dataset(
     for feat_index in range(n_features):
         # Compute mean
         temp_feat_mean = sum([data.x[:, feat_index].mean() for data in dataset_std]) / n_graphs
-        
         # Compute standard deviations
-        temp_feat_std = torch.sqrt(sum([(data.x[:, feat_index] - temp_feat_mean).pow(2).sum() for data in dataset_std]) / (n_graphs * (n_graphs - 1)))
-
+        temp_feat_var = sum([(data.x[:, feat_index] - temp_feat_mean).pow(2).sum() for data in dataset_std]) / (n_graphs * (n_graphs - 1))
+        temp_feat_std = torch.sqrt(temp_feat_var) if temp_feat_var > epsilon else torch.tensor(epsilon)
         # Update normalized values into the database
         for data in dataset_std:
             data.x[:, feat_index] = (data.x[:, feat_index] - temp_feat_mean) * scale / temp_feat_std
@@ -371,26 +375,15 @@ def standardize_dataset_from_keys(
     return dataset
 
 
-def check_finite_attributes(
-        data
-):
-    """
-    Checks if all node and edge attributes in the graph are finite (i.e., not NaN, inf, or -inf).
-
-    Args:
-        data: A graph object containing node attributes (`data.x`) and edge attributes (`data.edge_attr`).
-
-    Returns:
-        bool: 
-            - True if all node and edge attributes are finite.
-            - False if any node or edge attributes are NaN, inf, or -inf.
-    """
-    # Check node attributes
-    if not torch.any(torch.isfinite(data.x)):
+def check_finite_attributes(data):
+    # Check all node attributes
+    if not torch.all(torch.isfinite(data.x)):
         return False
-
-    # Check edge attributes
-    if not torch.any(torch.isfinite(data.edge_attr)):
+    # Check all edge attributes
+    if not torch.all(torch.isfinite(data.edge_attr)):
+        return False
+    # Check all target values
+    if not torch.all(torch.isfinite(data.y)):
         return False
     return True
 
