@@ -93,14 +93,6 @@ def estimate_uncertainty(
 
         # Interpolate uncertainties for the target dataset
         t_uncertainties = interpolator(t_embeddings)
-        # Clip to the 5th–95th percentile of reference uncertainties.
-        # Using the full [min, max] range allows the small number of extreme
-        # outliers (often >5σ) to dominate interpolated values for all novel
-        # targets. Percentile clipping keeps estimates in the bulk of the
-        # training distribution.
-        lo = np.percentile(r_uncertainties, 5)
-        hi = np.percentile(r_uncertainties, 95)
-        t_uncertainties = np.clip(t_uncertainties, lo, hi)
         return t_uncertainties
 
     elif interpolating_method == 'kNN':
